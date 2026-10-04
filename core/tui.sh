@@ -52,7 +52,7 @@ tui_step() {
 }
 
 tui_pause() {
-    printf "\n${DGRAY}Нажмите [Enter] для продолжения...${NC}"
+    printf "\n${DGRAY}Нажмите [Enter] для продолжения...${NC} " >&2
     # shellcheck disable=SC2034
     read -r dummy
 }
@@ -61,12 +61,16 @@ tui_prompt() {
     local prompt_text="$1"
     local default_val="$2"
     local user_val=""
+
     if [ -n "${default_val}" ]; then
-        printf "%s ${DGRAY}[%s]${NC}: " "${prompt_text}" "${default_val}"
+        printf "%b ${DGRAY}[%s]${NC}: " "${prompt_text}" "${default_val}" >&2
     else
-        printf "%s: " "${prompt_text}"
+        printf "%b: " "${prompt_text}" >&2
     fi
+
     read -r user_val
+    user_val=$(echo "${user_val}" | tr -d '\r\n')
+
     if [ -z "${user_val}" ]; then
         echo "${default_val}"
     else

@@ -30,7 +30,12 @@ zapret_status() {
 }
 
 zapret_start() {
+    if [ -f "${ZAPRET2_SYNC}" ]; then
+        chmod +x "${ZAPRET2_SYNC}" 2>/dev/null
+        "${ZAPRET2_SYNC}" >/dev/null 2>&1
+    fi
     if [ -f "${ZAPRET2_INIT}" ]; then
+        chmod +x "${ZAPRET2_INIT}" 2>/dev/null
         "${ZAPRET2_INIT}" start >/dev/null 2>&1
         sleep 1
     fi
