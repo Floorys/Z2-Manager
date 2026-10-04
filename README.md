@@ -28,12 +28,12 @@
 Подключитесь к роутеру по SSH и выполните одну команду:
 
 ```sh
-sh <(curl -fsSL https://raw.githubusercontent.com/FunnyDragon/Zapret2Manager/main/install.sh)
+sh <(curl -fsSL https://raw.githubusercontent.com/Floorys/Z2-Manager/main/install.sh)
 ```
 
 Или через `wget`:
 ```sh
-sh <(wget -qO- https://raw.githubusercontent.com/FunnyDragon/Zapret2Manager/main/install.sh)
+sh <(wget -qO- https://raw.githubusercontent.com/Floorys/Z2-Manager/main/install.sh)
 ```
 
 Инсталлятор автоматически настроит права, создаст симлинк `/usr/bin/z2m` и установит необходимые списки и фейковые блобы.

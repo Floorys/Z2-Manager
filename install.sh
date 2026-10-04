@@ -66,7 +66,7 @@ if [ -f "${SCRIPT_SOURCE_DIR}/zapret2-manager.sh" ]; then
     cp -rf "${SCRIPT_SOURCE_DIR}/"* "${INSTALL_DIR}/"
 else
     # Remote install via GitHub
-    REPO_URL="https://github.com/FunnyDragon/Zapret2Manager/archive/refs/heads/main.tar.gz"
+    REPO_URL="https://github.com/Floorys/Z2-Manager/archive/refs/heads/main.tar.gz"
     echo -e "${CYAN}Загружаем Zapret2-Manager с GitHub...${NC}"
     mkdir -p "${INSTALL_DIR}"
     curl -fsSL "${REPO_URL}" | tar -xz -C "${INSTALL_DIR}" --strip-components=1 2>/dev/null
