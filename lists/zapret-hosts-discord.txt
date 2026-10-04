@@ -1,0 +1,21 @@
+# Discord Domains for Zapret2 (Web, Login, Gateway, Voice, Media, CDN)
+discord.com
+www.discord.com
+gateway.discord.gg
+status.discord.com
+cdn.discordapp.com
+media.discordapp.net
+images-ext-1.discordapp.net
+images-ext-2.discordapp.net
+router.discordapp.net
+discord.gg
+discordapp.com
+discordapp.net
+discord.media
+discordcdn.com
+discord.dev
+discord.new
+dis.gd
+discord-activities.com
+discordactivities.com
+watchanimeattheoffice.com
