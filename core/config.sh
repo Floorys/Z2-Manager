@@ -35,11 +35,15 @@ UCI_CONFIG="/etc/config/zapret2"
 UCI_SECTION="zapret2.config"
 
 # Manager Runtime Directories
-if [ -z "${Z2M_DIR}" ]; then
-    if [ -f "$(dirname "$0")/config.sh" ]; then
+if [ -z "${Z2M_DIR}" ] || [ ! -d "${Z2M_DIR}/core" ]; then
+    if [ -d "/opt/zapret2-manager/core" ]; then
+        Z2M_DIR="/opt/zapret2-manager"
+    elif [ -f "$(dirname "$0")/core/config.sh" ]; then
+        Z2M_DIR="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
+    elif [ -f "$(dirname "$0")/config.sh" ]; then
         Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
     else
-        Z2M_DIR="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
+        Z2M_DIR="/opt/zapret2-manager"
     fi
 fi
 export Z2M_DIR

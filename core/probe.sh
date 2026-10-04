@@ -20,12 +20,11 @@ probe_check_deps() {
 probe_tls12() {
     local host="$1"
     local port="${2:-443}"
-    local timeout=4
+    local timeout=3
 
     if command -v curl >/dev/null 2>&1; then
-        curl -s -o /dev/null -I --connect-timeout "${timeout}" -m "${timeout}" \
+        curl -s -k -o /dev/null -I --connect-timeout "${timeout}" -m "${timeout}" \
             --tlsv1.2 --tls-max 1.2 \
-            --resolve "${host}:${port}:$(getent hosts "${host}" 2>/dev/null | awk '{print $1}' | head -n1)" \
             "https://${host}:${port}/" >/dev/null 2>&1 && return 0
     elif command -v openssl >/dev/null 2>&1; then
         echo -n | openssl s_client -servername "${host}" -connect "${host}:${port}" \
@@ -39,12 +38,11 @@ probe_tls12() {
 probe_tls13() {
     local host="$1"
     local port="${2:-443}"
-    local timeout=4
+    local timeout=3
 
     if command -v curl >/dev/null 2>&1; then
-        curl -s -o /dev/null -I --connect-timeout "${timeout}" -m "${timeout}" \
+        curl -s -k -o /dev/null -I --connect-timeout "${timeout}" -m "${timeout}" \
             --tlsv1.3 --tls-max 1.3 \
-            --resolve "${host}:${port}:$(getent hosts "${host}" 2>/dev/null | awk '{print $1}' | head -n1)" \
             "https://${host}:${port}/" >/dev/null 2>&1 && return 0
     elif command -v openssl >/dev/null 2>&1; then
         echo -n | openssl s_client -servername "${host}" -connect "${host}:${port}" \
@@ -182,28 +180,54 @@ probe_host_list() {
 }
 
 # DPI Signature Probe: determines if DPI is actively blocking host by SNI
-# Returns: "Clean", "Reset", "Freeze", or "NoConnection"
+# Returns: "Clean", "Reset", "Freeze", "DNSError", or "NoConnection"
 probe_dpi_verdict() {
     local host="$1"
-    local port=443
+    local port="${2:-443}"
 
-    # Step 1: Raw TCP connect
-    if command -v nc >/dev/null 2>&1; then
-        nc -z -w 3 "${host}" "${port}" >/dev/null 2>&1
-        if [ $? -ne 0 ]; then
-            echo "NoConnection"
-            return 0
-        fi
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "Unknown"
+        return 0
     fi
 
-    # Step 2: Real-SNI ClientHello
-    local output
-    output=$(openssl s_client -servername "${host}" -connect "${host}:${port}" 2>&1)
-    if echo "${output}" | grep -qi "CONNECTED"; then
+    local err_file="${Z2M_TMP}/curl_dpi_err_$$.tmp"
+    rm -f "${err_file}" 2>/dev/null
+
+    # Fast connect with SNI
+    curl -s -k -o /dev/null -I --connect-timeout 3 -m 5 "https://${host}:${port}/" 2>"${err_file}"
+    local code=$?
+
+    if [ ${code} -eq 0 ]; then
+        rm -f "${err_file}" 2>/dev/null
         echo "Clean"
-    elif echo "${output}" | grep -qi "reset by peer"; then
-        echo "Reset"
-    else
-        echo "Freeze"
+        return 0
     fi
+
+    local err_msg=""
+    [ -f "${err_file}" ] && err_msg="$(cat "${err_file}")"
+    rm -f "${err_file}" 2>/dev/null
+
+    case "${code}" in
+        35|52|56)
+            echo "Reset"
+            ;;
+        28)
+            echo "Freeze"
+            ;;
+        6)
+            echo "DNSError"
+            ;;
+        7)
+            echo "NoConnection"
+            ;;
+        *)
+            if echo "${err_msg}" | grep -qi "reset"; then
+                echo "Reset"
+            elif echo "${err_msg}" | grep -qi "timeout"; then
+                echo "Freeze"
+            else
+                echo "Blocked"
+            fi
+            ;;
+    esac
 }
