@@ -172,6 +172,6 @@ flowchart TD
 Благодарности авторам:
 - **Asterlike** за концепцию и реализацию генератора в [zapret2UI](https://github.com/Asterlike/zapret2UI).
 - **1andrevich** за пакет [zapret2-openwrt](https://github.com/1andrevich/zapret2-openwrt).
-- **bol-van** за оригинальный [zapret]([https://github.com/bol-van/zapret](https://github.com/bol-van/zapret2)).
+- **bol-van** за оригинальный [zapret](https://github.com/bol-van/zapret](https://github.com/bol-van/zapret2).
 - **Flowseal** за сообщество и актуальные наработки по обходу DPI.
 - **StressOzz** за концепцию модульного автоскрипта для OpenWrt [Zapret-Manager](https://github.com/StressOzz/Zapret-Manager).
