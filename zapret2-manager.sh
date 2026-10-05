@@ -42,7 +42,9 @@ service_menu() {
 
         local st="${RED}Остановлена${NC}"
         if zapret_is_running; then
-            st="${GREEN}Запущена (PID: $(pgrep nfqws2 | tr '\n' ' '))${NC}"
+            local pids
+            pids=$(pidof nfqws2 2>/dev/null || pgrep nfqws2 2>/dev/null || pidof nfqws 2>/dev/null)
+            st="${GREEN}Запущена (PID: ${pids})${NC}"
         fi
         printf "  ${BOLD}Текущее состояние:${NC} %b\n" "${st}"
 
@@ -91,12 +93,14 @@ service_menu() {
                 tui_pause
                 ;;
             5)
-                /etc/init.d/zapret2 enable >/dev/null 2>&1
+                [ -f /etc/init.d/zapret2 ] && /etc/init.d/zapret2 enable >/dev/null 2>&1
+                [ -f /etc/init.d/zapret ] && /etc/init.d/zapret enable >/dev/null 2>&1
                 tui_success "Автозапуск включен."
                 tui_pause
                 ;;
             6)
-                /etc/init.d/zapret2 disable >/dev/null 2>&1
+                [ -f /etc/init.d/zapret2 ] && /etc/init.d/zapret2 disable >/dev/null 2>&1
+                [ -f /etc/init.d/zapret ] && /etc/init.d/zapret disable >/dev/null 2>&1
                 tui_warn "Автозапуск отключен."
                 tui_pause
                 ;;
@@ -117,7 +121,7 @@ strategy_menu() {
         printf "  2. 🧬 Двухпроходный генератор       ${DGRAY}(полный алгоритм Asterlike: Discord + YouTube)${NC}\n"
         printf "  3. ▶️ Тестирование только YouTube   ${DGRAY}(подбор стратегии для видео и googlevideo)${NC}\n"
         printf "  4. 💬 Тестирование только Discord   ${DGRAY}(подбор стратегии для Gateway и CDN)${NC}\n"
-        printf "  5. 🔍 Проверить текущую стратегию   ${DGRAY}(детальный отчет по доступности хостов)${NC}\n"
+        printf "  5. 🔍 Проверить текущую стратегию   ${DGRAY}(быстрый отчет по доступности хостов)${NC}\n"
         printf "  0. Назад в главное меню\n\n"
 
         local st_choice
@@ -156,8 +160,7 @@ manual_catalog_menu() {
 
     local i=1
     while [ "${i}" -le "${CATALOG_COUNT}" ]; do
-        local name
-        local tagline
+        local name tagline
         name=$(catalog_get_name "${i}")
         tagline=$(catalog_get_tagline "${i}")
         printf "  ${BOLD}%2s.${NC} %-36s ${DGRAY}%s${NC}\n" "${i}" "${name}" "${tagline}"
@@ -173,9 +176,87 @@ manual_catalog_menu() {
         chosen_opt=$(catalog_get_opt "${sel}")
         tui_info "Применяем стратегию: «${chosen_name}»..."
         zapret_set_opt "${chosen_opt}"
-        tui_success "Стратегия успешно применена в /etc/config/zapret2!"
+        tui_success "Стратегия успешно применена!"
         tui_pause
     fi
+}
+
+# Функция самообновления из GitHub (в стиле StressOzz)
+run_self_update() {
+    tui_banner
+    tui_header "🔄 Обновление Zapret2-Manager"
+    tui_info "Загрузка актуальной версии из репозитория Floorys/Z2-Manager..."
+
+    local update_url="https://github.com/Floorys/Z2-Manager/archive/refs/heads/main.tar.gz"
+    local tmp_tar="/tmp/z2m_update.tar.gz"
+    local tmp_dir="/tmp/z2m_update_extracted"
+
+    rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+    mkdir -p "${tmp_dir}" 2>/dev/null
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -sSL -k --connect-timeout 8 -m 30 "${update_url}" -o "${tmp_tar}" 2>/dev/null
+    fi
+    if [ ! -s "${tmp_tar}" ] && command -v wget >/dev/null 2>&1; then
+        wget -q --timeout=15 -O "${tmp_tar}" "${update_url}" 2>/dev/null
+    fi
+
+    if [ ! -s "${tmp_tar}" ]; then
+        tui_error "Не удалось скачать архив обновления. Проверьте соединение с интернетом."
+        rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+        tui_pause
+        return 1
+    fi
+
+    tui_info "Распаковка новой версии..."
+    if ! tar -xzf "${tmp_tar}" -C "${tmp_dir}" 2>/dev/null; then
+        tui_error "Ошибка распаковки архива обновления."
+        rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+        tui_pause
+        return 1
+    fi
+
+    local src_folder
+    src_folder=$(find "${tmp_dir}" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n1)
+    if [ -z "${src_folder}" ] || [ ! -f "${src_folder}/zapret2-manager.sh" ]; then
+        tui_error "Структура обновленного архива некорректна."
+        rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+        tui_pause
+        return 1
+    fi
+
+    tui_info "Установка файлов в /opt/zapret2-manager..."
+    mkdir -p /opt/zapret2-manager
+    cp -rf "${src_folder}"/* /opt/zapret2-manager/
+    find /opt/zapret2-manager -name "*.sh" -exec sed -i 's/\r$//' {} + 2>/dev/null
+    chmod +x /opt/zapret2-manager/*.sh 2>/dev/null
+    chmod +x /opt/zapret2-manager/core/*.sh 2>/dev/null
+    chmod +x /opt/zapret2-manager/modules/*.sh 2>/dev/null
+    chmod +x /opt/zapret2-manager/strategies/*.sh 2>/dev/null
+
+    # Обновление команд z2m и zsm
+    cat << 'EOF' > /usr/bin/z2m
+#!/bin/sh
+exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
+EOF
+    chmod +x /usr/bin/z2m 2>/dev/null
+
+    cat << 'EOF' > /usr/bin/zsm
+#!/bin/sh
+exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
+EOF
+    chmod +x /usr/bin/zsm 2>/dev/null
+
+    # Синхронизация блобов и списков
+    zapret_sync_fake_blobs
+    zapret_sync_hostlists
+
+    rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+    tui_success "Zapret2-Manager успешно обновлен!"
+    echo ""
+    tui_info "Перезапуск интерфейса менеджера..."
+    sleep 1
+    exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
 }
 
 # Главное меню в стиле StressOzz Zapret-Manager
@@ -195,7 +276,9 @@ main_menu() {
         local zapret_stat="${RED}Остановлена${NC}"
         if zapret_is_installed; then
             if zapret_is_running; then
-                zapret_stat="${GREEN}Запущена (PID: $(pgrep nfqws2 | tr '\n' ' '))${NC}"
+                local pids
+                pids=$(pidof nfqws2 2>/dev/null || pgrep nfqws2 2>/dev/null || pidof nfqws 2>/dev/null)
+                zapret_stat="${GREEN}Запущена (PID: ${pids})${NC}"
             fi
         else
             zapret_stat="${RED}Не установлена${NC}"
@@ -214,10 +297,11 @@ main_menu() {
         printf "  ${BOLD}1.${NC} 🛡️ ${BLUE}Настройка и служба Zapret2${NC}    ${DGRAY}(статус, запуск, перезапуск, автозапуск)${NC}\n"
         printf "  ${BOLD}2.${NC} 🧬 ${MAGENTA}Подбор и генерация стратегий${NC}  ${DGRAY}(генератор Asterlike, автоподбор, тесты)${NC}\n"
         printf "  ${BOLD}3.${NC} 🎯 ${WHITE}Каталог готовых стратегий${NC}     ${DGRAY}(9 пресетов: General, Flowseal, VK...)${NC}\n"
-        printf "  ${BOLD}4.${NC} 🔐 ${GREEN}Настройка DNS и DoH${NC}           ${DGRAY}(DoH, защита от подмены DNS, Cloudflare)${NC}\n"
+        printf "  ${BOLD}4.${NC} 🔐 ${GREEN}Настройка DNS и DoH${NC}           ${DGRAY}(Google, Quad9, Xbox, DNS.ru, Cloudflare)${NC}\n"
         printf "  ${BOLD}5.${NC} 📁 ${YELLOW}Списки доменов и исключений${NC}   ${DGRAY}(YouTube, Discord, Исключения)${NC}\n"
         printf "  ${BOLD}6.${NC} 🩺 Диагностика сети и блокировок     ${DGRAY}(проверка DPI RST/Freeze, вердикты)${NC}\n"
-        printf "  ${BOLD}7.${NC} 📦 Синхронизация и обновление        ${DGRAY}(синхронизация блобов /opt/zapret2)${NC}\n"
+        printf "  ${BOLD}7.${NC} 📦 Синхронизация файлов и блобов    ${DGRAY}(копирование fake-блобов в /opt/zapret2)${NC}\n"
+        printf "  ${BOLD}8.${NC} 🔄 ${CYAN}Обновить Zapret2-Manager${NC}        ${DGRAY}(автоматическое обновление из GitHub)${NC}\n"
         printf "  ${BOLD}0.${NC} Выход\n\n"
 
         local choice
@@ -248,6 +332,9 @@ main_menu() {
                 zapret_sync_hostlists
                 tui_success "Файлы успешно синхронизированы!"
                 tui_pause
+                ;;
+            8|u|U)
+                run_self_update
                 ;;
             0|q|Q)
                 echo ""
@@ -292,6 +379,10 @@ case "$1" in
         zapret_status
         exit 0
         ;;
+    --update|-u)
+        run_self_update
+        exit 0
+        ;;
     --help|-h)
         printf "Zapret2-Manager v%s\n\n" "${Z2M_VERSION}"
         printf "Использование:\n"
@@ -301,6 +392,7 @@ case "$1" in
         printf "  z2m -yt | --youtube            Тестирование стратегий только для YouTube\n"
         printf "  z2m -dc | --discord            Тестирование стратегий только для Discord\n"
         printf "  z2m -d | --diagnostics         Диагностика доступности сервисов и DPI\n"
+        printf "  z2m -u | --update              Автоматическое обновление программы\n"
         printf "  z2m -r | --restart             Перезапуск службы zapret2\n"
         printf "  z2m -s | --status              Вывод статуса службы\n"
         exit 0

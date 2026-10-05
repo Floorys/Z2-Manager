@@ -1,23 +1,34 @@
 #!/bin/sh
 # ==============================================================================
 # Zapret2-Manager: Zapret2 Service & UCI Integration Layer
-# Interacts natively with 1andrevich/zapret2-openwrt
+# Interacts natively with 1andrevich/zapret2-openwrt and custom installations
 # ==============================================================================
 
 [ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
 [ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
 
 zapret_is_installed() {
-    if [ -f "${ZAPRET2_INIT}" ] && [ -f "${ZAPRET2_SYNC}" ]; then
-        return 0
+    [ -f "${ZAPRET2_INIT}" ] && return 0
+    [ -f "/etc/init.d/zapret" ] && return 0
+    [ -f "${ZAPRET2_SYNC}" ] && return 0
+    [ -f "${ZAPRET2_BIN}" ] && return 0
+    [ -f "${UCI_CONFIG}" ] && return 0
+    command -v nfqws2 >/dev/null 2>&1 && return 0
+    command -v nfqws >/dev/null 2>&1 && return 0
+    if command -v opkg >/dev/null 2>&1; then
+        opkg list-installed 2>/dev/null | grep -qiE "^zapret2? " && return 0
+    fi
+    if command -v apk >/dev/null 2>&1; then
+        apk info -e zapret2 2>/dev/null && return 0
     fi
     return 1
 }
 
 zapret_is_running() {
-    if pgrep nfqws2 >/dev/null 2>&1; then
-        return 0
-    fi
+    pidof nfqws2 >/dev/null 2>&1 && return 0
+    pgrep nfqws2 >/dev/null 2>&1 && return 0
+    pidof nfqws >/dev/null 2>&1 && return 0
+    pgrep nfqws >/dev/null 2>&1 && return 0
     return 1
 }
 
@@ -38,12 +49,18 @@ zapret_start() {
         chmod +x "${ZAPRET2_INIT}" 2>/dev/null
         "${ZAPRET2_INIT}" start >/dev/null 2>&1
         sleep 1
+    elif [ -f "/etc/init.d/zapret" ]; then
+        /etc/init.d/zapret start >/dev/null 2>&1
+        sleep 1
     fi
 }
 
 zapret_stop() {
     if [ -f "${ZAPRET2_INIT}" ]; then
         "${ZAPRET2_INIT}" stop >/dev/null 2>&1
+        sleep 1
+    elif [ -f "/etc/init.d/zapret" ]; then
+        /etc/init.d/zapret stop >/dev/null 2>&1
         sleep 1
     fi
 }
@@ -55,7 +72,11 @@ zapret_restart() {
         "${ZAPRET2_SYNC}" >/dev/null 2>&1
     fi
     if [ -f "${ZAPRET2_INIT}" ]; then
+        chmod +x "${ZAPRET2_INIT}" 2>/dev/null
         "${ZAPRET2_INIT}" restart >/dev/null 2>&1
+        sleep 1
+    elif [ -f "/etc/init.d/zapret" ]; then
+        /etc/init.d/zapret restart >/dev/null 2>&1
         sleep 1
     fi
     zapret_is_running
@@ -110,7 +131,12 @@ zapret_set_opt() {
     if command -v uci >/dev/null 2>&1; then
         uci set "${UCI_SECTION}.NFQWS2_ENABLE=1"
         uci set "${UCI_SECTION}.NFQWS2_OPT=${new_opt}"
-        uci commit zapret2
+        uci commit zapret2 2>/dev/null
+    fi
+
+    # Also update /opt/zapret2/config if present
+    if [ -f "${ZAPRET2_CONFIG}" ]; then
+        sed -i "s|^NFQWS2_OPT=.*|NFQWS2_OPT=\"${new_opt}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
     fi
 
     zapret_restart

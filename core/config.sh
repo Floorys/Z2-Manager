@@ -3,7 +3,7 @@
 # Zapret2-Manager: Global Configuration & Environment Constants
 # ==============================================================================
 
-Z2M_VERSION="1.0.0"
+Z2M_VERSION="1.1.0"
 Z2M_APP_NAME="Zapret2-Manager"
 
 # ANSI Colors for TUI
@@ -51,10 +51,10 @@ Z2M_TMP="/tmp/zapret2-manager"
 Z2M_BACKUP_DIR="${Z2M_DIR}/backups"
 Z2M_LOG_FILE="${Z2M_TMP}/z2m.log"
 
-# Probing target endpoints (adapted from Asterlike/zapret2UI TargetService & NetProbe)
-DISCORD_PROBE_HOSTS="discord.com gateway.discord.gg cdn.discordapp.com"
-YOUTUBE_PROBE_HOSTS="www.youtube.com googlevideo.com i.ytimg.com"
-ALL_PROBE_HOSTS="discord.com gateway.discord.gg cdn.discordapp.com www.youtube.com googlevideo.com i.ytimg.com"
+# Probing target endpoints
+DISCORD_PROBE_HOSTS="discord.com gateway.discord.gg"
+YOUTUBE_PROBE_HOSTS="www.youtube.com googlevideo.com"
+ALL_PROBE_HOSTS="discord.com www.youtube.com"
 
 # Chrome-like User-Agent for realistic probes
 BROWSER_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"

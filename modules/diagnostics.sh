@@ -14,9 +14,20 @@ run_diagnostics() {
     tui_banner
     tui_header "🩺 Диагностика сетевой доступности и DPI блокировок"
 
+    local interrupted=0
+    cleanup_diag() {
+        echo ""
+        tui_warn "Диагностика прервана пользователем."
+        trap - INT TERM
+        interrupted=1
+    }
+    trap cleanup_diag INT TERM
+
     printf "${BOLD}Статус службы Zapret2:${NC} "
     if zapret_is_running; then
-        printf "${GREEN}Работает (nfqws2 PID: %s)${NC}\n" "$(pgrep nfqws2 | tr '\n' ' ')"
+        local pids
+        pids=$(pidof nfqws2 2>/dev/null || pgrep nfqws2 2>/dev/null || pidof nfqws 2>/dev/null)
+        printf "${GREEN}Работает (PID: %s)${NC}\n" "${pids}"
     else
         printf "${RED}Остановлена${NC}\n"
     fi
@@ -27,6 +38,11 @@ run_diagnostics() {
     printf "${DGRAY}───────────────────────────────────────────────────────────────────${NC}\n"
 
     for host in ${ALL_PROBE_HOSTS}; do
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
+
         local t12_res="✗" t12_col="${RED}"
         local t13_res="✗" t13_col="${RED}"
         local http_res="✗" http_col="${RED}"
@@ -48,6 +64,8 @@ run_diagnostics() {
         printf "%-28s ${t12_col}%-10s${NC} ${t13_col}%-10s${NC} ${http_col}%-12s${NC} ${dpi_col}%-12s${NC}\n" \
             "${host}" "${t12_res}" "${t13_res}" "${http_res}" "${dpi_verdict}"
     done
+
+    trap - INT TERM
 
     echo ""
     tui_header "2. Пояснение DPI вердиктов"

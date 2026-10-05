@@ -79,12 +79,30 @@ if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
     ${PKG_INSTALL} curl >/dev/null 2>&1
 fi
 
-# 5. Проверка наличия zapret2 (1andrevich)
-if [ -f /opt/zapret2/sync_config.sh ] && [ -f /opt/zapret2/nfqws2 ]; then
-    echo -e "  Статус Zapret2: ${GREEN}Установлен в /opt/zapret2${NC}"
+# 5. Проверка наличия zapret2 (все возможные пути и менеджеры пакетов)
+zapret_already_installed() {
+    [ -f /etc/init.d/zapret2 ] && return 0
+    [ -f /etc/init.d/zapret ] && return 0
+    [ -f /opt/zapret2/sync_config.sh ] && return 0
+    [ -f /opt/zapret2/nfqws2 ] && return 0
+    [ -f /opt/zapret2/config ] && return 0
+    [ -f /etc/config/zapret2 ] && return 0
+    command -v nfqws2 >/dev/null 2>&1 && return 0
+    command -v nfqws >/dev/null 2>&1 && return 0
+    if command -v opkg >/dev/null 2>&1; then
+        opkg list-installed 2>/dev/null | grep -qiE "^zapret2? " && return 0
+    fi
+    if command -v apk >/dev/null 2>&1; then
+        apk info -e zapret2 2>/dev/null && return 0
+    fi
+    return 1
+}
+
+if zapret_already_installed; then
+    echo -e "  Статус Zapret2: ${GREEN}Обнаружен установленный Zapret2 в системе (пропуск повторной установки)${NC}"
 else
-    echo -e "${YELLOW}Zapret2 не обнаружен в /opt/zapret2.${NC}"
-    echo -e "${CYAN}Автоматическая установка zapret2 под архитектуру ${ARCH}...${NC}"
+    echo -e "${YELLOW}Zapret2 не обнаружен в системе.${NC}"
+    echo -e "${CYAN}Автоматическая загрузка zapret2 под архитектуру ${ARCH}...${NC}"
 
     ZAPRET_BASE_URL="https://github.com/1andrevich/zapret2-openwrt/releases/latest/download"
 
@@ -128,11 +146,11 @@ else
         rm -f /tmp/zapret2.ipk /tmp/luci-app-zapret2.ipk 2>/dev/null
     fi
 
-    if [ -f /opt/zapret2/sync_config.sh ]; then
+    if zapret_already_installed; then
         echo -e "${GREEN}Пакет zapret2 успешно установлен на роутер!${NC}"
         /etc/init.d/zapret2 enable 2>/dev/null
     else
-        echo -e "${YELLOW}Предупреждение: zapret2 не найден. Установите пакет вручную при необходимости.${NC}"
+        echo -e "${YELLOW}Предупреждение: zapret2 не найден автоматически. При необходимости установите его вручную.${NC}"
     fi
     echo ""
 fi
@@ -219,37 +237,41 @@ EOF
 chmod +x "${BIN_LINK_ZSM}" 2>/dev/null
 
 # 10. Первичная синхронизация блобов, хостлистов и восстановление конфигурации
-if [ -d /opt/zapret2 ]; then
+mkdir -p /opt/zapret2/files/fake /opt/zapret2/ipset 2>/dev/null
+if [ -d "${INSTALL_DIR}/fake" ]; then
     echo -e "${CYAN}Копируем fake-блобы и списки доменов в /opt/zapret2...${NC}"
-    mkdir -p /opt/zapret2/files/fake /opt/zapret2/ipset 2>/dev/null
     cp -f "${INSTALL_DIR}/fake/"*.bin /opt/zapret2/files/fake/ 2>/dev/null
     chmod 644 /opt/zapret2/files/fake/*.bin 2>/dev/null
+fi
+if [ -d "${INSTALL_DIR}/lists" ]; then
     cp -f "${INSTALL_DIR}/lists/"*.txt /opt/zapret2/ipset/ 2>/dev/null
     chmod 644 /opt/zapret2/ipset/*.txt 2>/dev/null
+fi
 
-    # Авто-исправление поврежденных двойных кавычек в конфигурации
-    if [ -f /opt/zapret2/config ]; then
-        if ! sh -n /opt/zapret2/config 2>/dev/null; then
-            raw_opt=$(grep "^NFQWS2_OPT=" /opt/zapret2/config 2>/dev/null | sed 's/^NFQWS2_OPT=//' | tr -d '"')
-            sed -i "s|^NFQWS2_OPT=.*|NFQWS2_OPT=\"${raw_opt}\"|" /opt/zapret2/config 2>/dev/null
-        fi
+# Авто-исправление поврежденных двойных кавычек в конфигурации
+if [ -f /opt/zapret2/config ]; then
+    if ! sh -n /opt/zapret2/config 2>/dev/null; then
+        raw_opt=$(grep "^NFQWS2_OPT=" /opt/zapret2/config 2>/dev/null | sed 's/^NFQWS2_OPT=//' | tr -d '"')
+        sed -i "s|^NFQWS2_OPT=.*|NFQWS2_OPT=\"${raw_opt}\"|" /opt/zapret2/config 2>/dev/null
     fi
-    if command -v uci >/dev/null 2>&1; then
-        cur_opt="$(uci -q get zapret2.config.NFQWS2_OPT)"
-        if [ -n "${cur_opt}" ]; then
-            clean_opt="$(echo "${cur_opt}" | tr -d '"')"
-            uci set zapret2.config.NFQWS2_OPT="${clean_opt}"
-            uci commit zapret2 2>/dev/null
-        fi
+fi
+if command -v uci >/dev/null 2>&1; then
+    cur_opt="$(uci -q get zapret2.config.NFQWS2_OPT)"
+    if [ -n "${cur_opt}" ]; then
+        clean_opt="$(echo "${cur_opt}" | tr -d '"')"
+        uci set zapret2.config.NFQWS2_OPT="${clean_opt}"
+        uci commit zapret2 2>/dev/null
     fi
+fi
 
-    # Перезапуск zapret2 с чистой конфигурацией
-    if [ -f /opt/zapret2/sync_config.sh ]; then
-        /opt/zapret2/sync_config.sh >/dev/null 2>&1
-    fi
-    if [ -f /etc/init.d/zapret2 ]; then
-        /etc/init.d/zapret2 restart >/dev/null 2>&1
-    fi
+# Перезапуск zapret2 с чистой конфигурацией если служба существует
+if [ -f /opt/zapret2/sync_config.sh ]; then
+    /opt/zapret2/sync_config.sh >/dev/null 2>&1
+fi
+if [ -f /etc/init.d/zapret2 ]; then
+    /etc/init.d/zapret2 restart >/dev/null 2>&1
+elif [ -f /etc/init.d/zapret ]; then
+    /etc/init.d/zapret restart >/dev/null 2>&1
 fi
 
 # 11. Тестовый запуск для проверки
@@ -269,4 +291,5 @@ echo -e "Для автоподбора лучшей стратегии:         
 echo -e "Для двухпроходного генератора:                   ${BOLD}${YELLOW}z2m -g${NC}"
 echo -e "Для проверки YouTube:                            ${BOLD}${YELLOW}z2m -yt${NC}"
 echo -e "Для проверки Discord:                            ${BOLD}${YELLOW}z2m -dc${NC}"
+echo -e "Для обновления программы:                        ${BOLD}${YELLOW}z2m -u${NC}"
 echo ""

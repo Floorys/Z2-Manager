@@ -21,7 +21,7 @@ run_strategy_autoselect() {
     echo ""
 
     if ! zapret_is_installed; then
-        tui_error "Пакет zapret2 не установлен в /opt/zapret2!"
+        tui_error "Пакет zapret2 не установлен в системе!"
         tui_pause
         return 1
     fi
@@ -33,9 +33,17 @@ run_strategy_autoselect() {
     # Backup current configuration
     local bak_file
     bak_file=$(zapret_backup_config)
+    local interrupted=0
 
-    # Trap Ctrl+C to safely restore configuration on abort
-    trap 'echo ""; tui_warn "Прерывание! Восстанавливаем исходную конфигурацию..."; zapret_restore_config "'"${bak_file}"'"; exit 130' INT TERM
+    cleanup_autoselect() {
+        echo ""
+        tui_warn "Прерывание! Восстанавливаем исходную конфигурацию..."
+        zapret_restore_config "${bak_file}"
+        rm -f "${bak_file}" 2>/dev/null
+        trap - INT TERM
+        interrupted=1
+    }
+    trap cleanup_autoselect INT TERM
 
     tui_print_result_table_header
 
@@ -45,9 +53,12 @@ run_strategy_autoselect() {
 
     local i=1
     while [ "${i}" -le "${CATALOG_COUNT}" ]; do
-        local name
-        local tagline
-        local opt
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
+
+        local name tagline opt
         name=$(catalog_get_name "${i}")
         tagline=$(catalog_get_tagline "${i}")
         opt=$(catalog_get_opt "${i}")
@@ -57,18 +68,33 @@ run_strategy_autoselect() {
             continue
         fi
 
+        local short_name
+        short_name=$(printf "%.34s" "${name}")
+        printf "%-36s ${YELLOW}%-10s${NC} ${DGRAY}%-10s${NC} ${YELLOW}⏳ Тест...${NC}\r" "${short_name}" "..." "..."
+
         # Apply candidate strategy
         zapret_set_opt "${opt}"
 
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
+
         if ! zapret_is_running; then
-            tui_print_result_row "${name}" "0" "6" "6"
+            tui_print_result_row "${name}" "0" "2" "2"
             i=$(( i + 1 ))
             continue
         fi
 
-        # Probe all goal hosts
+        # Fast probe of goal hosts
         local p_res
         p_res=$(probe_host_list "${ALL_PROBE_HOSTS}")
+
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
+
         local ok tot score max_score
         ok=$(echo "${p_res}" | awk '{print $1}')
         tot=$(echo "${p_res}" | awk '{print $2}')
@@ -77,7 +103,7 @@ run_strategy_autoselect() {
 
         local fail=$(( tot - ok ))
 
-        # Print table row
+        # Print table row replacing the temporary status
         tui_print_result_row "${name}" "${ok}" "${fail}" "${tot}"
 
         # Compare with best score
@@ -96,6 +122,11 @@ run_strategy_autoselect() {
         i=$(( i + 1 ))
     done
 
+    if [ "${interrupted}" -eq 1 ]; then
+        tui_pause
+        return 0
+    fi
+
     # Apply the winning strategy
     local win_name win_opt win_tagline
     win_name=$(catalog_get_name "${best_idx}")
@@ -112,25 +143,35 @@ run_strategy_autoselect() {
     tui_header "🏆 Лучшая стратегия определена и применена!"
     tui_success "Название : ${win_name}"
     [ -n "${win_tagline}" ] && tui_info "Описание : ${win_tagline}"
-    tui_info "Конфигурация успешно сохранена в /etc/config/zapret2."
+    tui_info "Конфигурация успешно сохранена и работает."
     tui_pause
 }
 
 run_test_youtube_only() {
     tui_banner
     tui_header "▶️ Тестирование стратегий для YouTube"
-    tui_info "Проверка 9 стратегий каталога на хостах YouTube..."
+    tui_info "Проверка стратегий каталога на доступность YouTube..."
     echo ""
 
     if ! zapret_is_installed; then
-        tui_error "Пакет zapret2 не установлен в /opt/zapret2!"
+        tui_error "Пакет zapret2 не установлен в системе!"
         tui_pause
         return 1
     fi
 
     local bak_file
     bak_file=$(zapret_backup_config)
-    trap 'echo ""; tui_warn "Восстановление конфигурации..."; zapret_restore_config "'"${bak_file}"'"; exit 130' INT TERM
+    local interrupted=0
+
+    cleanup_yt() {
+        echo ""
+        tui_warn "Прерывание! Восстанавливаем исходную конфигурацию..."
+        zapret_restore_config "${bak_file}"
+        rm -f "${bak_file}" 2>/dev/null
+        trap - INT TERM
+        interrupted=1
+    }
+    trap cleanup_yt INT TERM
 
     tui_print_result_table_header
 
@@ -139,20 +180,40 @@ run_test_youtube_only() {
 
     local i=1
     while [ "${i}" -le "${CATALOG_COUNT}" ]; do
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
+
         local name opt
         name=$(catalog_get_name "${i}")
         opt=$(catalog_get_opt "${i}")
 
+        local short_name
+        short_name=$(printf "%.34s" "${name}")
+        printf "%-36s ${YELLOW}%-10s${NC} ${DGRAY}%-10s${NC} ${YELLOW}⏳ Тест...${NC}\r" "${short_name}" "..." "..."
+
         zapret_set_opt "${opt}"
 
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
+
         if ! zapret_is_running; then
-            tui_print_result_row "${name}" "0" "3" "3"
+            tui_print_result_row "${name}" "0" "2" "2"
             i=$(( i + 1 ))
             continue
         fi
 
         local p_res ok tot score
         p_res=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
+
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
+
         ok=$(echo "${p_res}" | awk '{print $1}')
         tot=$(echo "${p_res}" | awk '{print $2}')
         score=$(echo "${p_res}" | awk '{print $3}')
@@ -169,6 +230,11 @@ run_test_youtube_only() {
 
         i=$(( i + 1 ))
     done
+
+    if [ "${interrupted}" -eq 1 ]; then
+        tui_pause
+        return 0
+    fi
 
     local win_name win_opt
     win_name=$(catalog_get_name "${best_idx}")
@@ -185,18 +251,28 @@ run_test_youtube_only() {
 run_test_discord_only() {
     tui_banner
     tui_header "💬 Тестирование стратегий для Discord"
-    tui_info "Проверка 9 стратегий каталога на хостах Discord..."
+    tui_info "Проверка стратегий каталога на доступность Discord..."
     echo ""
 
     if ! zapret_is_installed; then
-        tui_error "Пакет zapret2 не установлен в /opt/zapret2!"
+        tui_error "Пакет zapret2 не установлен в системе!"
         tui_pause
         return 1
     fi
 
     local bak_file
     bak_file=$(zapret_backup_config)
-    trap 'echo ""; tui_warn "Восстановление конфигурации..."; zapret_restore_config "'"${bak_file}"'"; exit 130' INT TERM
+    local interrupted=0
+
+    cleanup_dc() {
+        echo ""
+        tui_warn "Прерывание! Восстанавливаем исходную конфигурацию..."
+        zapret_restore_config "${bak_file}"
+        rm -f "${bak_file}" 2>/dev/null
+        trap - INT TERM
+        interrupted=1
+    }
+    trap cleanup_dc INT TERM
 
     tui_print_result_table_header
 
@@ -205,20 +281,40 @@ run_test_discord_only() {
 
     local i=1
     while [ "${i}" -le "${CATALOG_COUNT}" ]; do
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
+
         local name opt
         name=$(catalog_get_name "${i}")
         opt=$(catalog_get_opt "${i}")
 
+        local short_name
+        short_name=$(printf "%.34s" "${name}")
+        printf "%-36s ${YELLOW}%-10s${NC} ${DGRAY}%-10s${NC} ${YELLOW}⏳ Тест...${NC}\r" "${short_name}" "..." "..."
+
         zapret_set_opt "${opt}"
 
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
+
         if ! zapret_is_running; then
-            tui_print_result_row "${name}" "0" "3" "3"
+            tui_print_result_row "${name}" "0" "2" "2"
             i=$(( i + 1 ))
             continue
         fi
 
         local p_res ok tot score
         p_res=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
+
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
+
         ok=$(echo "${p_res}" | awk '{print $1}')
         tot=$(echo "${p_res}" | awk '{print $2}')
         score=$(echo "${p_res}" | awk '{print $3}')
@@ -235,6 +331,11 @@ run_test_discord_only() {
 
         i=$(( i + 1 ))
     done
+
+    if [ "${interrupted}" -eq 1 ]; then
+        tui_pause
+        return 0
+    fi
 
     local win_name win_opt
     win_name=$(catalog_get_name "${best_idx}")

@@ -23,7 +23,7 @@ run_strategy_generator() {
     echo ""
 
     if ! zapret_is_installed; then
-        tui_error "Пакет zapret2 не установлен в /opt/zapret2!"
+        tui_error "Пакет zapret2 не установлен в системе!"
         tui_pause
         return 1
     fi
@@ -35,9 +35,17 @@ run_strategy_generator() {
     # Backup current configuration
     local bak_file
     bak_file=$(zapret_backup_config)
+    local interrupted=0
 
-    # Trap Ctrl+C to safely restore configuration on abort
-    trap 'echo ""; tui_warn "Прерывание! Восстанавливаем исходную конфигурацию..."; zapret_restore_config "'"${bak_file}"'"; exit 130' INT TERM
+    cleanup_generator() {
+        echo ""
+        tui_warn "Прерывание генератора! Восстанавливаем исходную конфигурацию..."
+        zapret_restore_config "${bak_file}"
+        rm -f "${bak_file}" 2>/dev/null
+        trap - INT TERM
+        interrupted=1
+    }
+    trap cleanup_generator INT TERM
 
     tui_info "Исходная конфигурация сохранена."
     tui_info "Запуск Pass 1: тестирование ${CANDIDATES_COUNT} десинк-бандлов..."
@@ -55,8 +63,12 @@ run_strategy_generator() {
     # ---- PASS 1: Fast TLS screening of each bundle for Discord & YouTube ----
     local i=1
     while [ "${i}" -le "${CANDIDATES_COUNT}" ]; do
-        local c_name
-        local c_tls
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
+
+        local c_name c_tls
         c_name=$(get_candidate_name "${i}")
         c_tls=$(get_candidate_tls "${i}")
 
@@ -68,10 +80,17 @@ run_strategy_generator() {
         local short_name
         short_name=$(printf "%.30s" "${c_name}")
 
+        printf "%-4s %-32s ${YELLOW}⏳ Тест...${NC}\r" "${i}" "${short_name}"
+
         # Apply candidate as standalone test rule
         local test_opt
         test_opt=$(combo_build_single_test_args "${c_tls}")
         zapret_set_opt "${test_opt}"
+
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
 
         # If daemon crashed or failed to start, score 0 and move on immediately
         if ! zapret_is_running; then
@@ -83,29 +102,29 @@ run_strategy_generator() {
             continue
         fi
 
-        # Fast TLS probes on key endpoints (discord.com, gateway.discord.gg)
+        # Fast probes on key endpoints
         local d_score=0
-        probe_tls13 "discord.com" && d_score=$(( d_score + 1 ))
-        probe_tls12 "discord.com" && d_score=$(( d_score + 1 ))
-        probe_tls13 "gateway.discord.gg" && d_score=$(( d_score + 1 ))
-        probe_tls12 "gateway.discord.gg" && d_score=$(( d_score + 1 ))
+        probe_http_reach "discord.com" 2 && d_score=$(( d_score + 1 ))
+        probe_fast_tls "gateway.discord.gg" 443 2 && d_score=$(( d_score + 1 ))
 
-        # Fast TLS probes on YouTube endpoints (www.youtube.com, googlevideo.com)
         local y_score=0
-        probe_tls13 "www.youtube.com" && y_score=$(( y_score + 1 ))
-        probe_tls12 "www.youtube.com" && y_score=$(( y_score + 1 ))
-        probe_tls13 "googlevideo.com" && y_score=$(( y_score + 1 ))
-        probe_tls12 "googlevideo.com" && y_score=$(( y_score + 1 ))
+        probe_http_reach "www.youtube.com" 2 && y_score=$(( y_score + 1 ))
+        probe_fast_tls "googlevideo.com" 443 2 && y_score=$(( y_score + 1 ))
+
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
 
         local d_col="${RED}"
         [ "${d_score}" -gt 0 ] && d_col="${YELLOW}"
-        [ "${d_score}" -eq 4 ] && d_col="${GREEN}"
+        [ "${d_score}" -eq 2 ] && d_col="${GREEN}"
 
         local y_col="${RED}"
         [ "${y_score}" -gt 0 ] && y_col="${YELLOW}"
-        [ "${y_score}" -eq 4 ] && y_col="${GREEN}"
+        [ "${y_score}" -eq 2 ] && y_col="${GREEN}"
 
-        printf "%-4s %-32s ${d_col}%s/4${NC}        ${y_col}%s/4${NC}        %b\n" \
+        printf "%-4s %-32s ${d_col}%s/2${NC}        ${y_col}%s/2${NC}        %b\n" \
             "${i}" "${short_name}" "${d_score}" "${y_score}" "${gw_safe}"
 
         # Save scores (format: "index:d_score" / "index:y_score")
@@ -113,7 +132,7 @@ run_strategy_generator() {
         cand_scores_y="${cand_scores_y} ${i}:${y_score}"
 
         # Early exit check: 100% on everything and gateway-friendly
-        if [ "${d_score}" -eq 4 ] && [ "${y_score}" -eq 4 ] && is_gateway_friendly "${c_tls}"; then
+        if [ "${d_score}" -eq 2 ] && [ "${y_score}" -eq 2 ] && is_gateway_friendly "${c_tls}"; then
             tui_success "Найден отличный универсальный бандл #${i} (${c_name})! Переход к сборке."
             perfect_cand="${i}"
             break
@@ -121,6 +140,11 @@ run_strategy_generator() {
 
         i=$(( i + 1 ))
     done
+
+    if [ "${interrupted}" -eq 1 ]; then
+        tui_pause
+        return 0
+    fi
 
     echo ""
     tui_header "Pass 2: Сборка и совместная проверка лучших сочетаний"
@@ -150,12 +174,10 @@ run_strategy_generator() {
             fi
         done
 
-        # Fallback if no gateway-friendly scored > 0
         if [ "${d_count}" -eq 0 ]; then
             top_d_list=$(echo "${sorted_d}" | head -n3 | cut -d: -f1 | tr '\n' ' ')
         fi
 
-        # Find top 3 YouTube candidates
         local sorted_y
         sorted_y=$(echo "${cand_scores_y}" | tr ' ' '\n' | grep ":" | sort -t: -k2 -nr)
         top_y_list=$(echo "${sorted_y}" | head -n3 | cut -d: -f1 | tr '\n' ' ')
@@ -166,10 +188,15 @@ run_strategy_generator() {
     local best_d_idx=1
     local best_y_idx=1
     local attempt=0
-    local max_tests=6
+    local max_tests=5
 
     for d_idx in ${top_d_list}; do
         for y_idx in ${top_y_list}; do
+            if [ "${interrupted}" -eq 1 ]; then
+                tui_pause
+                return 0
+            fi
+
             attempt=$(( attempt + 1 ))
             [ "${attempt}" -gt "${max_tests}" ] && break
 
@@ -185,16 +212,25 @@ run_strategy_generator() {
             combo_args=$(combo_build_args "${d_tls}" "${y_tls}" "${d_tls}")
             zapret_set_opt "${combo_args}"
 
+            if [ "${interrupted}" -eq 1 ]; then
+                tui_pause
+                return 0
+            fi
+
             # Probe Discord & YouTube together
             local cd_res cy_res
             cd_res=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
             cy_res=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
 
+            if [ "${interrupted}" -eq 1 ]; then
+                tui_pause
+                return 0
+            fi
+
             local cd_score cy_score
             cd_score=$(echo "${cd_res}" | awk '{print $3}')
             cy_score=$(echo "${cy_res}" | awk '{print $3}')
 
-            # Calculate min and sum
             local cur_min
             if [ "${cd_score}" -le "${cy_score}" ]; then
                 cur_min="${cd_score}"
@@ -203,7 +239,7 @@ run_strategy_generator() {
             fi
             local cur_sum=$(( cd_score + cy_score ))
 
-            printf "  -> Результат: Discord: %s/15, YouTube: %s/15 (Min: %s, Sum: %s)\n" \
+            printf "  -> Результат: Discord: %s/10, YouTube: %s/10 (Min: %s, Sum: %s)\n" \
                 "${cd_score}" "${cy_score}" "${cur_min}" "${cur_sum}"
 
             if [ "${cur_min}" -gt "${best_min}" ] || { [ "${cur_min}" -eq "${best_min}" ] && [ "${cur_sum}" -gt "${best_sum}" ]; }; then
@@ -213,13 +249,17 @@ run_strategy_generator() {
                 best_y_idx="${y_idx}"
             fi
 
-            # Stop if both services achieved 100%
-            if [ "${cur_min}" -ge 15 ]; then
+            if [ "${cur_min}" -ge 10 ]; then
                 break
             fi
         done
         [ "${attempt}" -gt "${max_tests}" ] && break
     done
+
+    if [ "${interrupted}" -eq 1 ]; then
+        tui_pause
+        return 0
+    fi
 
     # Build and permanently apply winning strategy
     local win_d_name win_y_name win_d_tls win_y_tls
@@ -241,6 +281,6 @@ run_strategy_generator() {
     tui_success "Discord профиль : ${win_d_name}"
     tui_success "YouTube профиль : ${win_y_name}"
     tui_success "Voice Discord   : QUIC-блок Flowseal (quic_vk:repeats=6)"
-    tui_info "Конфигурация успешно сохранена в /etc/config/zapret2 и применена."
+    tui_info "Конфигурация успешно сохранена и применена."
     tui_pause
 }
