@@ -20,7 +20,7 @@ probe_check_deps() {
 probe_tls12() {
     local host="$1"
     local port="${2:-443}"
-    local timeout=3
+    local timeout=2
 
     if command -v curl >/dev/null 2>&1; then
         curl -s -k -o /dev/null -I --connect-timeout "${timeout}" -m "${timeout}" \
@@ -38,7 +38,7 @@ probe_tls12() {
 probe_tls13() {
     local host="$1"
     local port="${2:-443}"
-    local timeout=3
+    local timeout=2
 
     if command -v curl >/dev/null 2>&1; then
         curl -s -k -o /dev/null -I --connect-timeout "${timeout}" -m "${timeout}" \
@@ -48,6 +48,15 @@ probe_tls13() {
         echo -n | openssl s_client -servername "${host}" -connect "${host}:${port}" \
             -tls1_3 2>&1 | grep -q "CONNECTED" && return 0
     fi
+    return 1
+}
+
+# Fast TLS Handshake probe (checks TLS 1.3 then TLS 1.2)
+probe_fast_tls() {
+    local host="$1"
+    local port="${2:-443}"
+    probe_tls13 "${host}" "${port}" && return 0
+    probe_tls12 "${host}" "${port}" && return 0
     return 1
 }
 

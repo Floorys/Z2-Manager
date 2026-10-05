@@ -27,6 +27,13 @@ export Z2M_DIR
 . "${Z2M_DIR}/modules/dns.sh"
 . "${Z2M_DIR}/strategies/catalog.sh"
 
+# 3. Авто-исправление конфигурации и первичная синхронизация при необходимости
+zapret_repair_config
+if [ -d "${ZAPRET2_DIR}" ] && [ ! -f "${ZAPRET2_FAKE_DIR}/tls_clienthello_www_google_com.bin" ]; then
+    zapret_sync_fake_blobs
+    zapret_sync_hostlists
+fi
+
 # 1. Меню управления службой Zapret2
 service_menu() {
     while true; do

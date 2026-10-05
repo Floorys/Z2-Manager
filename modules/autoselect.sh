@@ -60,6 +60,12 @@ run_strategy_autoselect() {
         # Apply candidate strategy
         zapret_set_opt "${opt}"
 
+        if ! zapret_is_running; then
+            tui_print_result_row "${name}" "0" "6" "6"
+            i=$(( i + 1 ))
+            continue
+        fi
+
         # Probe all goal hosts
         local p_res
         p_res=$(probe_host_list "${ALL_PROBE_HOSTS}")
@@ -139,6 +145,12 @@ run_test_youtube_only() {
 
         zapret_set_opt "${opt}"
 
+        if ! zapret_is_running; then
+            tui_print_result_row "${name}" "0" "3" "3"
+            i=$(( i + 1 ))
+            continue
+        fi
+
         local p_res ok tot score
         p_res=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
         ok=$(echo "${p_res}" | awk '{print $1}')
@@ -198,6 +210,12 @@ run_test_discord_only() {
         opt=$(catalog_get_opt "${i}")
 
         zapret_set_opt "${opt}"
+
+        if ! zapret_is_running; then
+            tui_print_result_row "${name}" "0" "3" "3"
+            i=$(( i + 1 ))
+            continue
+        fi
 
         local p_res ok tot score
         p_res=$(probe_host_list "${DISCORD_PROBE_HOSTS}")

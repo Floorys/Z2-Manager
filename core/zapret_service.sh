@@ -49,22 +49,27 @@ zapret_stop() {
 }
 
 zapret_restart() {
+    zapret_repair_config
     if [ -f "${ZAPRET2_SYNC}" ]; then
         chmod +x "${ZAPRET2_SYNC}" 2>/dev/null
         "${ZAPRET2_SYNC}" >/dev/null 2>&1
     fi
     if [ -f "${ZAPRET2_INIT}" ]; then
         "${ZAPRET2_INIT}" restart >/dev/null 2>&1
-        sleep 2
+        sleep 1
     fi
+    zapret_is_running
 }
 
 zapret_get_opt() {
+    local val=""
     if command -v uci >/dev/null 2>&1; then
-        uci -q get "${UCI_SECTION}.NFQWS2_OPT"
-    else
-        grep "^NFQWS2_OPT=" "${ZAPRET2_CONFIG}" 2>/dev/null | cut -d'=' -f2- | tr -d '"'
+        val="$(uci -q get "${UCI_SECTION}.NFQWS2_OPT")"
     fi
+    if [ -z "${val}" ] && [ -f "${ZAPRET2_CONFIG}" ]; then
+        val="$(grep "^NFQWS2_OPT=" "${ZAPRET2_CONFIG}" 2>/dev/null | cut -d'=' -f2- | tr -d '"')"
+    fi
+    echo "${val}" | tr -d '"'
 }
 
 zapret_backup_config() {
@@ -85,9 +90,22 @@ zapret_restore_config() {
     fi
 }
 
+# Repair corrupted /opt/zapret2/config caused by unescaped nested double quotes
+zapret_repair_config() {
+    if [ -f "${ZAPRET2_CONFIG}" ]; then
+        if ! sh -n "${ZAPRET2_CONFIG}" 2>/dev/null; then
+            local raw_opt
+            raw_opt=$(grep "^NFQWS2_OPT=" "${ZAPRET2_CONFIG}" 2>/dev/null | sed 's/^NFQWS2_OPT=//' | tr -d '"')
+            sed -i "s|^NFQWS2_OPT=.*|NFQWS2_OPT=\"${raw_opt}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
+        fi
+    fi
+}
+
 # Apply new NFQWS2_OPT to OpenWrt UCI and restart service
 zapret_set_opt() {
     local new_opt="$1"
+    # Strictly strip all double quotes to prevent syntax corruption in /opt/zapret2/config
+    new_opt=$(echo "${new_opt}" | tr -d '"')
 
     if command -v uci >/dev/null 2>&1; then
         uci set "${UCI_SECTION}.NFQWS2_ENABLE=1"

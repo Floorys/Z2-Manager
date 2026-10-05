@@ -52,7 +52,7 @@ run_strategy_generator() {
     local cand_scores_y=""
     local perfect_cand=0
 
-    # ---- PASS 1: Score each bundle for Discord and YouTube ----
+    # ---- PASS 1: Fast TLS screening of each bundle for Discord & YouTube ----
     local i=1
     while [ "${i}" -le "${CANDIDATES_COUNT}" ]; do
         local c_name
@@ -65,42 +65,56 @@ run_strategy_generator() {
             gw_safe="${GREEN}Да${NC}"
         fi
 
+        local short_name
+        short_name=$(printf "%.30s" "${c_name}")
+
         # Apply candidate as standalone test rule
         local test_opt
         test_opt=$(combo_build_single_test_args "${c_tls}")
         zapret_set_opt "${test_opt}"
 
-        # Probe Discord
-        local d_res
-        d_res=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
-        local d_ok d_tot d_score d_max
-        d_ok=$(echo "${d_res}" | awk '{print $1}')
-        d_tot=$(echo "${d_res}" | awk '{print $2}')
-        d_score=$(echo "${d_res}" | awk '{print $3}')
-        d_max=$(echo "${d_res}" | awk '{print $4}')
+        # If daemon crashed or failed to start, score 0 and move on immediately
+        if ! zapret_is_running; then
+            printf "%-4s %-32s ${RED}%-12s${NC} ${RED}%-12s${NC} %b\n" \
+                "${i}" "${short_name}" "Сбой" "Сбой" "${gw_safe}"
+            cand_scores_d="${cand_scores_d} ${i}:0"
+            cand_scores_y="${cand_scores_y} ${i}:0"
+            i=$(( i + 1 ))
+            continue
+        fi
 
-        # Probe YouTube
-        local y_res
-        y_res=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
-        local y_ok y_tot y_score y_max
-        y_ok=$(echo "${y_res}" | awk '{print $1}')
-        y_tot=$(echo "${y_res}" | awk '{print $2}')
-        y_score=$(echo "${y_res}" | awk '{print $3}')
-        y_max=$(echo "${y_res}" | awk '{print $4}')
+        # Fast TLS probes on key endpoints (discord.com, gateway.discord.gg)
+        local d_score=0
+        probe_tls13 "discord.com" && d_score=$(( d_score + 1 ))
+        probe_tls12 "discord.com" && d_score=$(( d_score + 1 ))
+        probe_tls13 "gateway.discord.gg" && d_score=$(( d_score + 1 ))
+        probe_tls12 "gateway.discord.gg" && d_score=$(( d_score + 1 ))
 
-        # Format output
-        local short_name
-        short_name=$(printf "%.30s" "${c_name}")
-        printf "%-4s %-32s ${CYAN}%s/%s${NC} (%-2s)   ${YELLOW}%s/%s${NC} (%-2s)   %b\n" \
-            "${i}" "${short_name}" "${d_ok}" "${d_tot}" "${d_score}" "${y_ok}" "${y_tot}" "${y_score}" "${gw_safe}"
+        # Fast TLS probes on YouTube endpoints (www.youtube.com, googlevideo.com)
+        local y_score=0
+        probe_tls13 "www.youtube.com" && y_score=$(( y_score + 1 ))
+        probe_tls12 "www.youtube.com" && y_score=$(( y_score + 1 ))
+        probe_tls13 "googlevideo.com" && y_score=$(( y_score + 1 ))
+        probe_tls12 "googlevideo.com" && y_score=$(( y_score + 1 ))
+
+        local d_col="${RED}"
+        [ "${d_score}" -gt 0 ] && d_col="${YELLOW}"
+        [ "${d_score}" -eq 4 ] && d_col="${GREEN}"
+
+        local y_col="${RED}"
+        [ "${y_score}" -gt 0 ] && y_col="${YELLOW}"
+        [ "${y_score}" -eq 4 ] && y_col="${GREEN}"
+
+        printf "%-4s %-32s ${d_col}%s/4${NC}        ${y_col}%s/4${NC}        %b\n" \
+            "${i}" "${short_name}" "${d_score}" "${y_score}" "${gw_safe}"
 
         # Save scores (format: "index:d_score" / "index:y_score")
         cand_scores_d="${cand_scores_d} ${i}:${d_score}"
         cand_scores_y="${cand_scores_y} ${i}:${y_score}"
 
         # Early exit check: 100% on everything and gateway-friendly
-        if [ "$(( d_ok + y_ok ))" -eq "$(( d_tot + y_tot ))" ] && is_gateway_friendly "${c_tls}"; then
-            tui_success "Найден идеальный универсальный бандл #${i} (${c_name})! Ранний выход."
+        if [ "${d_score}" -eq 4 ] && [ "${y_score}" -eq 4 ] && is_gateway_friendly "${c_tls}"; then
+            tui_success "Найден отличный универсальный бандл #${i} (${c_name})! Переход к сборке."
             perfect_cand="${i}"
             break
         fi

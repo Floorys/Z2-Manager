@@ -218,9 +218,38 @@ exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
 EOF
 chmod +x "${BIN_LINK_ZSM}" 2>/dev/null
 
-# 10. Первичная синхронизация блобов и хостлистов
+# 10. Первичная синхронизация блобов, хостлистов и восстановление конфигурации
 if [ -d /opt/zapret2 ]; then
-    sh "${INSTALL_DIR}/zapret2-manager.sh" --restart >/dev/null 2>&1
+    echo -e "${CYAN}Копируем fake-блобы и списки доменов в /opt/zapret2...${NC}"
+    mkdir -p /opt/zapret2/files/fake /opt/zapret2/ipset 2>/dev/null
+    cp -f "${INSTALL_DIR}/fake/"*.bin /opt/zapret2/files/fake/ 2>/dev/null
+    chmod 644 /opt/zapret2/files/fake/*.bin 2>/dev/null
+    cp -f "${INSTALL_DIR}/lists/"*.txt /opt/zapret2/ipset/ 2>/dev/null
+    chmod 644 /opt/zapret2/ipset/*.txt 2>/dev/null
+
+    # Авто-исправление поврежденных двойных кавычек в конфигурации
+    if [ -f /opt/zapret2/config ]; then
+        if ! sh -n /opt/zapret2/config 2>/dev/null; then
+            raw_opt=$(grep "^NFQWS2_OPT=" /opt/zapret2/config 2>/dev/null | sed 's/^NFQWS2_OPT=//' | tr -d '"')
+            sed -i "s|^NFQWS2_OPT=.*|NFQWS2_OPT=\"${raw_opt}\"|" /opt/zapret2/config 2>/dev/null
+        fi
+    fi
+    if command -v uci >/dev/null 2>&1; then
+        cur_opt="$(uci -q get zapret2.config.NFQWS2_OPT)"
+        if [ -n "${cur_opt}" ]; then
+            clean_opt="$(echo "${cur_opt}" | tr -d '"')"
+            uci set zapret2.config.NFQWS2_OPT="${clean_opt}"
+            uci commit zapret2 2>/dev/null
+        fi
+    fi
+
+    # Перезапуск zapret2 с чистой конфигурацией
+    if [ -f /opt/zapret2/sync_config.sh ]; then
+        /opt/zapret2/sync_config.sh >/dev/null 2>&1
+    fi
+    if [ -f /etc/init.d/zapret2 ]; then
+        /etc/init.d/zapret2 restart >/dev/null 2>&1
+    fi
 fi
 
 # 11. Тестовый запуск для проверки

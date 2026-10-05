@@ -54,7 +54,7 @@ tui_step() {
 tui_pause() {
     printf "\n${DGRAY}Нажмите [Enter] для продолжения...${NC} " >&2
     # shellcheck disable=SC2034
-    read -r dummy
+    read -r dummy </dev/tty 2>/dev/null || read -r dummy
 }
 
 tui_prompt() {
@@ -68,7 +68,7 @@ tui_prompt() {
         printf "%b: " "${prompt_text}" >&2
     fi
 
-    read -r user_val
+    read -r user_val </dev/tty 2>/dev/null || read -r user_val
     user_val=$(echo "${user_val}" | tr -d '\r\n')
 
     if [ -z "${user_val}" ]; then
