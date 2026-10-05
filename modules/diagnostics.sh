@@ -1,7 +1,7 @@
 #!/bin/sh
 # ==============================================================================
 # Zapret2-Manager: Diagnostics Module
-# Network reachability, DPI signature detection, and service status
+# Comprehensive network reachability, DPI signature detection, and service status
 # ==============================================================================
 
 [ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
@@ -9,6 +9,23 @@
 . "${Z2M_DIR}/core/tui.sh"
 . "${Z2M_DIR}/core/probe.sh"
 . "${Z2M_DIR}/core/zapret_service.sh"
+
+get_host_category() {
+    local h="$1"
+    case "${h}" in
+        www.youtube.com)    echo "YouTube (Web)" ;;
+        googlevideo.com)    echo "YouTube (Видео)" ;;
+        i.ytimg.com)        echo "YouTube (Превью)" ;;
+        discord.com)        echo "Discord (Web)" ;;
+        gateway.discord.gg) echo "Discord (Голос/GW)" ;;
+        cdn.discordapp.com) echo "Discord (Медиа)" ;;
+        rutracker.org)      echo "РКН / RuTracker" ;;
+        x.com)              echo "РКН / Twitter (X)" ;;
+        instagram.com)      echo "РКН / Instagram" ;;
+        vk.com)             echo "Контроль связи" ;;
+        *)                  echo "Веб-сервис" ;;
+    esac
+}
 
 run_diagnostics() {
     tui_banner
@@ -27,29 +44,48 @@ run_diagnostics() {
     if zapret_is_running; then
         local pids
         pids=$(pidof nfqws2 2>/dev/null || pgrep nfqws2 2>/dev/null || pidof nfqws 2>/dev/null)
-        printf "${GREEN}Работает (PID: %s)${NC}\n" "${pids}"
+        printf "${GREEN}Запущена (PID: %s)${NC}\n" "${pids}"
     else
         printf "${RED}Остановлена${NC}\n"
     fi
-    echo ""
 
-    tui_header "1. Проверка доступности ключевых сервисов"
-    printf "${BOLD}%-28s %-10s %-10s %-12s %-12s${NC}\n" "Хост" "TLS 1.2" "TLS 1.3" "HTTP Reach" "DPI Вердикт"
+    local cur_opt
+    cur_opt=$(zapret_get_opt)
+    local short_opt
+    short_opt=$(printf "%.50s" "${cur_opt}")
+    [ ${#cur_opt} -gt 50 ] && short_opt="${short_opt}..."
+    printf "${BOLD}Активный NFQWS2_OPT :${NC} ${CYAN}%s${NC}\n\n" "${short_opt:-по умолчанию}"
+
+    tui_header "1. Проверка доступности доменов (набор как в Zapret-Manager)"
+    printf "${BOLD}%-24s %-18s %-10s %-14s${NC}\n" "Хост" "Категория" "Статус" "DPI Вердикт"
     printf "${DGRAY}───────────────────────────────────────────────────────────────────${NC}\n"
 
-    for host in ${ALL_PROBE_HOSTS}; do
+    local total_hosts=0
+    local ok_hosts=0
+
+    for host in ${DIAGNOSTIC_HOSTS}; do
         if [ "${interrupted}" -eq 1 ]; then
             tui_pause
             return 0
         fi
 
-        local t12_res="✗" t12_col="${RED}"
-        local t13_res="✗" t13_col="${RED}"
-        local http_res="✗" http_col="${RED}"
+        total_hosts=$(( total_hosts + 1 ))
+        local cat_name
+        cat_name=$(get_host_category "${host}")
 
-        probe_tls12 "${host}" && { t12_res="✓"; t12_col="${GREEN}"; }
-        probe_tls13 "${host}" && { t13_res="✓"; t13_col="${GREEN}"; }
-        probe_http_reach "${host}" && { http_res="✓"; http_col="${GREEN}"; }
+        # Live progress indicator
+        printf "%-24s %-18s ${YELLOW}⏳ Проверка...${NC}\r" "${host}" "${cat_name}"
+
+        local is_ok=0
+        if probe_http_reach "${host}" 2; then
+            is_ok=1
+            ok_hosts=$(( ok_hosts + 1 ))
+        fi
+
+        if [ "${interrupted}" -eq 1 ]; then
+            tui_pause
+            return 0
+        fi
 
         local dpi_verdict
         dpi_verdict=$(probe_dpi_verdict "${host}")
@@ -58,21 +94,39 @@ run_diagnostics() {
             Clean) dpi_col="${GREEN}" ;;
             Reset) dpi_col="${RED}" ;;
             Freeze) dpi_col="${MAGENTA}" ;;
+            DNSError) dpi_col="${YELLOW}" ;;
             NoConnection) dpi_col="${DGRAY}" ;;
+            *) dpi_col="${RED}" ;;
         esac
 
-        printf "%-28s ${t12_col}%-10s${NC} ${t13_col}%-10s${NC} ${http_col}%-12s${NC} ${dpi_col}%-12s${NC}\n" \
-            "${host}" "${t12_res}" "${t13_res}" "${http_res}" "${dpi_verdict}"
+        local status_str="${RED}✗ Блок${NC}"
+        [ "${is_ok}" -eq 1 ] && status_str="${GREEN}✓ Доступ${NC}"
+
+        printf "%-24s %-18s %-19b ${dpi_col}%-14s${NC}\n" \
+            "${host}" "${cat_name}" "${status_str}" "${dpi_verdict}"
     done
 
     trap - INT TERM
 
     echo ""
+    printf "  ${BOLD}Итог проверки:${NC} доступно ${GREEN}%s${NC} из ${BOLD}%s${NC} сервисов.\n" \
+        "${ok_hosts}" "${total_hosts}"
+
+    if [ "${ok_hosts}" -eq "${total_hosts}" ]; then
+        tui_success "Все сервисы доступны без признаков блокировок!"
+    elif [ "${ok_hosts}" -ge 7 ]; then
+        tui_info "Большинство сервисов доступно. Основные блокировки обойдены."
+    else
+        tui_warn "Обнаружены активные блокировки. Рекомендуется запустить автоподбор стратегии (z2m -a)."
+    fi
+
+    echo ""
     tui_header "2. Пояснение DPI вердиктов"
-    printf "${GREEN}Clean${NC}        - соединение проходит без признаков вмешательства DPI.\n"
-    printf "${RED}Reset${NC}        - провайдер отправляет поддельный TCP RST при отправке SNI.\n"
-    printf "${MAGENTA}Freeze${NC}       - пакет с именем хоста (SNI) молча сбрасывается ТСПУ/DPI.\n"
-    printf "${DGRAY}NoConnection${NC} - TCP-порт недоступен (блокировка по IP или сбой маршрутизации).\n"
+    printf "  ${GREEN}Clean${NC}        - соединение проходит без признаков вмешательства DPI.\n"
+    printf "  ${RED}Reset${NC}        - провайдер отправляет поддельный TCP RST при отправке ClientHello SNI.\n"
+    printf "  ${MAGENTA}Freeze${NC}       - пакет с именем хоста (SNI) молча сбрасывается ТСПУ/DPI (Drop).\n"
+    printf "  ${YELLOW}DNSError${NC}     - имя хоста не резолвится через DNS (включите DoH в меню 4).\n"
+    printf "  ${DGRAY}NoConnection${NC} - порт недоступен (блокировка по IP или сбой маршрутизации).\n"
 
     tui_pause
 }

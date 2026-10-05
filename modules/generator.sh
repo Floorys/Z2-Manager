@@ -102,14 +102,17 @@ run_strategy_generator() {
             continue
         fi
 
-        # Fast probes on key endpoints
+        # Fast probes on key Discord endpoints (Web + Voice/GW + CDN)
         local d_score=0
         probe_http_reach "discord.com" 2 && d_score=$(( d_score + 1 ))
         probe_fast_tls "gateway.discord.gg" 443 2 && d_score=$(( d_score + 1 ))
+        probe_fast_tls "cdn.discordapp.com" 443 2 && d_score=$(( d_score + 1 ))
 
+        # Fast probes on key YouTube endpoints (Web + Video CDN + Preview CDN)
         local y_score=0
         probe_http_reach "www.youtube.com" 2 && y_score=$(( y_score + 1 ))
         probe_fast_tls "googlevideo.com" 443 2 && y_score=$(( y_score + 1 ))
+        probe_fast_tls "i.ytimg.com" 443 2 && y_score=$(( y_score + 1 ))
 
         if [ "${interrupted}" -eq 1 ]; then
             tui_pause
@@ -118,13 +121,13 @@ run_strategy_generator() {
 
         local d_col="${RED}"
         [ "${d_score}" -gt 0 ] && d_col="${YELLOW}"
-        [ "${d_score}" -eq 2 ] && d_col="${GREEN}"
+        [ "${d_score}" -eq 3 ] && d_col="${GREEN}"
 
         local y_col="${RED}"
         [ "${y_score}" -gt 0 ] && y_col="${YELLOW}"
-        [ "${y_score}" -eq 2 ] && y_col="${GREEN}"
+        [ "${y_score}" -eq 3 ] && y_col="${GREEN}"
 
-        printf "%-4s %-32s ${d_col}%s/2${NC}        ${y_col}%s/2${NC}        %b\n" \
+        printf "%-4s %-32s ${d_col}%s/3${NC}        ${y_col}%s/3${NC}        %b\n" \
             "${i}" "${short_name}" "${d_score}" "${y_score}" "${gw_safe}"
 
         # Save scores (format: "index:d_score" / "index:y_score")
@@ -132,7 +135,7 @@ run_strategy_generator() {
         cand_scores_y="${cand_scores_y} ${i}:${y_score}"
 
         # Early exit check: 100% on everything and gateway-friendly
-        if [ "${d_score}" -eq 2 ] && [ "${y_score}" -eq 2 ] && is_gateway_friendly "${c_tls}"; then
+        if [ "${d_score}" -eq 3 ] && [ "${y_score}" -eq 3 ] && is_gateway_friendly "${c_tls}"; then
             tui_success "Найден отличный универсальный бандл #${i} (${c_name})! Переход к сборке."
             perfect_cand="${i}"
             break
@@ -239,7 +242,7 @@ run_strategy_generator() {
             fi
             local cur_sum=$(( cd_score + cy_score ))
 
-            printf "  -> Результат: Discord: %s/10, YouTube: %s/10 (Min: %s, Sum: %s)\n" \
+            printf "  -> Результат: Discord: %s/15, YouTube: %s/15 (Min: %s, Sum: %s)\n" \
                 "${cd_score}" "${cy_score}" "${cur_min}" "${cur_sum}"
 
             if [ "${cur_min}" -gt "${best_min}" ] || { [ "${cur_min}" -eq "${best_min}" ] && [ "${cur_sum}" -gt "${best_sum}" ]; }; then
@@ -249,7 +252,7 @@ run_strategy_generator() {
                 best_y_idx="${y_idx}"
             fi
 
-            if [ "${cur_min}" -ge 10 ]; then
+            if [ "${cur_min}" -ge 15 ]; then
                 break
             fi
         done

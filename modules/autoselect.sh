@@ -359,25 +359,29 @@ run_test_current_strategy() {
 
     local cur_opt
     cur_opt=$(zapret_get_opt)
-    printf "  ${BOLD}Текущие параметры:${NC} ${CYAN}%s${NC}\n\n" "${cur_opt:-по умолчанию}"
+    local short_opt
+    short_opt=$(printf "%.50s" "${cur_opt}")
+    [ ${#cur_opt} -gt 50 ] && short_opt="${short_opt}..."
+    printf "  ${BOLD}Текущие параметры:${NC} ${CYAN}%s${NC}\n\n" "${short_opt:-по умолчанию}"
 
-    tui_header "Результаты проверки доступности:"
-    printf "${BOLD}%-28s %-10s %-10s %-12s${NC}\n" "Хост" "TLS 1.2" "TLS 1.3" "HTTP Доступ"
+    tui_header "Результаты проверки доступности (набор сервисов):"
+    printf "${BOLD}%-24s %-18s %-12s %-12s${NC}\n" "Хост" "Категория" "HTTP Доступ" "TLS Рукопожатие"
     printf "${DGRAY}───────────────────────────────────────────────────────────────────${NC}\n"
 
-    for h in ${ALL_PROBE_HOSTS}; do
-        local s_t12="✗" c_t12="${RED}"
-        local s_t13="✗" c_t13="${RED}"
-        local s_http="✗" c_http="${RED}"
+    for h in ${DIAGNOSTIC_HOSTS}; do
+        local cat_name
+        cat_name=$(probe_get_host_category "${h}")
+        local s_http="✗ Блок" c_http="${RED}"
+        local s_tls="✗ Сбой" c_tls="${RED}"
 
-        probe_tls12 "${h}" && { s_t12="✓"; c_t12="${GREEN}"; }
-        probe_tls13 "${h}" && { s_t13="✓"; c_t13="${GREEN}"; }
-        probe_http_reach "${h}" && { s_http="✓"; c_http="${GREEN}"; }
+        probe_http_reach "${h}" 2 && { s_http="✓ OK"; c_http="${GREEN}"; }
+        probe_fast_tls "${h}" 443 2 && { s_tls="✓ OK"; c_tls="${GREEN}"; }
 
-        printf "%-28s ${c_t12}%-10s${NC} ${c_t13}%-10s${NC} ${c_http}%-12s${NC}\n" \
-            "${h}" "${s_t12}" "${s_t13}" "${s_http}"
+        printf "%-24s %-18s ${c_http}%-12s${NC} ${c_tls}%-12s${NC}\n" \
+            "${h}" "${cat_name}" "${s_http}" "${s_tls}"
     done
 
     echo ""
     tui_pause
 }
+

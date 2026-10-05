@@ -51,10 +51,16 @@ Z2M_TMP="/tmp/zapret2-manager"
 Z2M_BACKUP_DIR="${Z2M_DIR}/backups"
 Z2M_LOG_FILE="${Z2M_TMP}/z2m.log"
 
-# Probing target endpoints
-DISCORD_PROBE_HOSTS="discord.com gateway.discord.gg"
-YOUTUBE_PROBE_HOSTS="www.youtube.com googlevideo.com"
-ALL_PROBE_HOSTS="discord.com www.youtube.com"
+# Probing target endpoints (Expanded suite inspired by StressOzz)
+DISCORD_PROBE_HOSTS="discord.com gateway.discord.gg cdn.discordapp.com"
+YOUTUBE_PROBE_HOSTS="www.youtube.com googlevideo.com i.ytimg.com"
+BLOCKED_PROBE_HOSTS="rutracker.org x.com instagram.com"
+
+# Benchmark domain suite for auto-selection (YouTube + Discord + RKN blocked)
+ALL_PROBE_HOSTS="www.youtube.com googlevideo.com discord.com gateway.discord.gg rutracker.org"
+
+# Full Diagnostic suite (10 domains across YouTube, Discord, RKN blocks & connection control)
+DIAGNOSTIC_HOSTS="www.youtube.com googlevideo.com i.ytimg.com discord.com gateway.discord.gg cdn.discordapp.com rutracker.org x.com instagram.com vk.com"
 
 # Chrome-like User-Agent for realistic probes
 BROWSER_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"

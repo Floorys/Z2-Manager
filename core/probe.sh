@@ -13,6 +13,24 @@ probe_check_deps() {
     return 1
 }
 
+# Resolve human-readable category name for target hosts
+probe_get_host_category() {
+    local h="$1"
+    case "${h}" in
+        www.youtube.com)    echo "YouTube (Web)" ;;
+        googlevideo.com)    echo "YouTube (Видео)" ;;
+        i.ytimg.com)        echo "YouTube (Превью)" ;;
+        discord.com)        echo "Discord (Web)" ;;
+        gateway.discord.gg) echo "Discord (Голос/GW)" ;;
+        cdn.discordapp.com) echo "Discord (Медиа)" ;;
+        rutracker.org)      echo "РКН / RuTracker" ;;
+        x.com)              echo "РКН / Twitter (X)" ;;
+        instagram.com)      echo "РКН / Instagram" ;;
+        vk.com)             echo "Контроль связи" ;;
+        *)                  echo "Веб-сервис" ;;
+    esac
+}
+
 # Fast TLS Handshake & HTTP Reachability Probe
 # Uses HEAD request (-I) with strict timeouts to eliminate router hangs
 # Returns 0 (Reachable/Bypassed) or 1 (Blocked/Timeout/RST)
