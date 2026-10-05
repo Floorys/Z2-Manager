@@ -29,7 +29,7 @@ get_host_category() {
 
 run_diagnostics() {
     tui_banner
-    tui_header "🩺 Диагностика сетевой доступности и DPI блокировок"
+    tui_header "Диагностика сетевой доступности и DPI блокировок"
 
     local interrupted=0
     cleanup_diag() {
@@ -74,7 +74,7 @@ run_diagnostics() {
         cat_name=$(get_host_category "${host}")
 
         # Live progress indicator
-        printf "%-24s %-18s ${YELLOW}⏳ Проверка...${NC}\r" "${host}" "${cat_name}"
+        printf "%-24s %-18s ${YELLOW}[...] Тест${NC}\r" "${host}" "${cat_name}"
 
         local is_ok=0
         if probe_http_reach "${host}" 2; then
@@ -99,11 +99,13 @@ run_diagnostics() {
             *) dpi_col="${RED}" ;;
         esac
 
-        local status_str="${RED}✗ Блок${NC}"
-        [ "${is_ok}" -eq 1 ] && status_str="${GREEN}✓ Доступ${NC}"
-
-        printf "%-24s %-18s %-19b ${dpi_col}%-14s${NC}\n" \
-            "${host}" "${cat_name}" "${status_str}" "${dpi_verdict}"
+        printf "%-24s %-18s " "${host}" "${cat_name}"
+        if [ "${is_ok}" -eq 1 ]; then
+            printf "${GREEN}%-10s${NC} " "✓ Доступ"
+        else
+            printf "${RED}%-10s${NC} " "✗ Блок"
+        fi
+        printf "${dpi_col}%-14s${NC}\n" "${dpi_verdict}"
     done
 
     trap - INT TERM

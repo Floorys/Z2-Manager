@@ -371,14 +371,21 @@ run_test_current_strategy() {
     for h in ${DIAGNOSTIC_HOSTS}; do
         local cat_name
         cat_name=$(probe_get_host_category "${h}")
-        local s_http="✗ Блок" c_http="${RED}"
-        local s_tls="✗ Сбой" c_tls="${RED}"
+        local ok_http=0 ok_tls=0
+        probe_http_reach "${h}" 2 && ok_http=1
+        probe_fast_tls "${h}" 443 2 && ok_tls=1
 
-        probe_http_reach "${h}" 2 && { s_http="✓ OK"; c_http="${GREEN}"; }
-        probe_fast_tls "${h}" 443 2 && { s_tls="✓ OK"; c_tls="${GREEN}"; }
-
-        printf "%-24s %-18s ${c_http}%-12s${NC} ${c_tls}%-12s${NC}\n" \
-            "${h}" "${cat_name}" "${s_http}" "${s_tls}"
+        printf "%-24s %-18s " "${h}" "${cat_name}"
+        if [ "${ok_http}" -eq 1 ]; then
+            printf "${GREEN}%-12s${NC} " "✓ OK"
+        else
+            printf "${RED}%-12s${NC} " "✗ Блок"
+        fi
+        if [ "${ok_tls}" -eq 1 ]; then
+            printf "${GREEN}%-12s${NC}\n" "✓ OK"
+        else
+            printf "${RED}%-12s${NC}\n" "✗ Сбой"
+        fi
     done
 
     echo ""
