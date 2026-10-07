@@ -19,3 +19,7 @@ dis.gd
 discord-activities.com
 discordactivities.com
 watchanimeattheoffice.com
+discord.co
+discord.design
+discordapp.io
+discord-attachments-uploads-prd.storage.googleapis.com

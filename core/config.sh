@@ -3,7 +3,7 @@
 # Zapret2-Manager: Global Configuration & Environment Constants
 # ==============================================================================
 
-Z2M_VERSION="1.1.0"
+Z2M_VERSION="1.2.0"
 Z2M_APP_NAME="Zapret2-Manager"
 
 # ANSI Colors for TUI
@@ -33,6 +33,10 @@ ZAPRET2_BIN="${ZAPRET2_DIR}/nfqws2"
 # OpenWrt UCI Configuration File
 UCI_CONFIG="/etc/config/zapret2"
 UCI_SECTION="zapret2.config"
+
+# Recommended default ports for Zapret2 (Web, Discord Voice, CDN, Cloudflare)
+DEFAULT_PORTS_TCP="80,443,2053,2083,2087,2096,8443"
+DEFAULT_PORTS_UDP="443,19294-19344,50000-65535"
 
 # Manager Runtime Directories
 if [ -z "${Z2M_DIR}" ] || [ ! -d "${Z2M_DIR}/core" ]; then

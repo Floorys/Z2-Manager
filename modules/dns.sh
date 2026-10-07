@@ -4,7 +4,7 @@
 # DNS leak prevention and DNS-over-HTTPS configuration for OpenWrt
 # ==============================================================================
 
-[ -z "${Z2M_DIR}" ] && Z2M_DIR="/opt/zapret2-manager"
+[ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
 [ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
 [ -f "${Z2M_DIR}/core/tui.sh" ] && . "${Z2M_DIR}/core/tui.sh"
 

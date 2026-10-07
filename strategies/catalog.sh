@@ -57,7 +57,7 @@ catalog_get_opt() {
             # 3) Flowseal general (ALT10): dual fake + ts
             local dc="--lua-desync=fake:blob=tls_google:tcp_ts=-1000:repeats=6 --lua-desync=fake:blob=tls_vk:tcp_ts=-1000:repeats=6"
             local yt="--lua-desync=fake:blob=tls_google:tcp_ts=-1000:ip_id=zero:repeats=6"
-            local voice="--lua-desync=fake:blob=quic_vk:repeats=6"
+            local voice="--payload=discord_ip_discovery,stun --lua-desync=fake:blob=0x00000000000000000000000000000000:repeats=2"
             combo_build_args "${dc}" "${yt}" "${dc}" "${voice}"
             ;;
         4)
@@ -65,7 +65,7 @@ catalog_get_opt() {
             local dc="--lua-desync=fake:blob=tls_google:tcp_ts=-1000:repeats=6 --lua-desync=multisplit:pos=1,midsld:seqovl=681:seqovl_pattern=tls_google:optional"
             local yt="--lua-desync=fake:blob=tls_google:tcp_ts=-1000:repeats=6 --lua-desync=multisplit:pos=1,midsld:seqovl=681:seqovl_pattern=tls_google:ip_id=zero:optional"
             local fb="--lua-desync=fake:blob=tls_google:tcp_ts=-1000:repeats=6 --lua-desync=multisplit:pos=1,midsld:seqovl=664:seqovl_pattern=tls_google:optional"
-            local voice="--lua-desync=fake:blob=quic_vk:repeats=6"
+            local voice="--payload=discord_ip_discovery,stun --lua-desync=fake:blob=0x00000000000000000000000000000000:repeats=2"
             combo_build_args "${dc}" "${yt}" "${fb}" "${voice}"
             ;;
         5)
@@ -97,7 +97,7 @@ catalog_get_opt() {
             [ -f "${ZAPRET2_FAKE_DIR}/quic_initial_www_google_com.bin" ] && \
                 opt="${opt} --blob=quic_google:@${ZAPRET2_FAKE_DIR}/quic_initial_www_google_com.bin"
             opt="${opt} --filter-tcp=443-65535 --filter-l7=tls ${filter_dc} --out-range=-d10 --payload=tls_client_hello --lua-desync=multisplit:pos=2,midsld-2:seqovl=1:seqovl_pattern=tls_google:optional"
-            opt="${opt} --new --filter-udp=19294-19344,50000-65535 --filter-l7=discord,stun --lua-desync=fake:blob=quic_google:repeats=6"
+            opt="${opt} --new --filter-udp=19294-19344,50000-65535 --filter-l7=discord,stun --payload=discord_ip_discovery,stun --lua-desync=fake:blob=0x00000000000000000000000000000000:repeats=2"
             echo "${opt}"
             ;;
         9)

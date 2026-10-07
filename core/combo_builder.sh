@@ -16,7 +16,7 @@ combo_build_args() {
     local discord_tls="$1"
     local youtube_tls="$2"
     local fallback_tls="${3:-$1}"
-    local voice_desync="${4:---lua-desync=fake:blob=quic_google:ip_autottl=-2,3-20:ip6_autottl=-2,3-20:repeats=2}"
+    local voice_desync="${4:---payload=discord_ip_discovery,stun --lua-desync=fake:blob=0x00000000000000000000000000000000:repeats=2}"
 
     local hostlist_discord="${ZAPRET2_IPSET_DIR}/zapret-hosts-discord.txt"
     local hostlist_youtube="${ZAPRET2_IPSET_DIR}/zapret-hosts-youtube.txt"

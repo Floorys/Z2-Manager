@@ -25,6 +25,8 @@ export Z2M_DIR
 . "${Z2M_DIR}/modules/diagnostics.sh"
 . "${Z2M_DIR}/modules/hostlists.sh"
 . "${Z2M_DIR}/modules/dns.sh"
+. "${Z2M_DIR}/modules/discord_fix.sh"
+. "${Z2M_DIR}/modules/ports.sh"
 . "${Z2M_DIR}/strategies/catalog.sh"
 
 # 3. Авто-исправление конфигурации и первичная синхронизация при необходимости
@@ -62,6 +64,8 @@ service_menu() {
         printf "  4. Показать полные параметры NFQWS2_OPT\n"
         printf "  5. Включить автозапуск при старте роутера\n"
         printf "  6. Отключить автозапуск\n"
+        printf "  7. 🎧 Починить голос Discord (Voice / звонки / custom.d #50)\n"
+        printf "  8. 🌐 Порты перехвата TCP / UDP (текущие: %s / %s)\n" "$(zapret_get_ports_tcp | cut -c1-15)..." "$(zapret_get_ports_udp | cut -c1-15)..."
         printf "  0. Назад в главное меню\n\n"
 
         local sc
@@ -104,6 +108,12 @@ service_menu() {
                 tui_warn "Автозапуск отключен."
                 tui_pause
                 ;;
+            7)
+                run_discord_fix_menu
+                ;;
+            8)
+                run_ports_menu
+                ;;
             0)
                 break
                 ;;
@@ -122,6 +132,7 @@ strategy_menu() {
         printf "  3. ▶️ Тестирование только YouTube   ${DGRAY}(подбор стратегии для видео и googlevideo)${NC}\n"
         printf "  4. 💬 Тестирование только Discord   ${DGRAY}(подбор стратегии для Gateway и CDN)${NC}\n"
         printf "  5. 🔍 Проверить текущую стратегию   ${DGRAY}(быстрый отчет по доступности хостов)${NC}\n"
+        printf "  6. 🎧 Исправление голоса Discord    ${DGRAY}(звонки, RTC, custom.d #50)${NC}\n"
         printf "  0. Назад в главное меню\n\n"
 
         local st_choice
@@ -141,6 +152,9 @@ strategy_menu() {
                 ;;
             5)
                 run_test_current_strategy
+                ;;
+            6)
+                run_discord_fix_menu
                 ;;
             0)
                 break
@@ -233,6 +247,7 @@ run_self_update() {
     chmod +x /opt/zapret2-manager/core/*.sh 2>/dev/null
     chmod +x /opt/zapret2-manager/modules/*.sh 2>/dev/null
     chmod +x /opt/zapret2-manager/strategies/*.sh 2>/dev/null
+    chmod +x /opt/zapret2-manager/templates/*.sh 2>/dev/null
 
     # Обновление команд z2m и zsm
     cat << 'EOF' > /usr/bin/z2m
@@ -247,9 +262,20 @@ exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
 EOF
     chmod +x /usr/bin/zsm 2>/dev/null
 
-    # Синхронизация блобов и списков
+    # Синхронизация блобов, списков и фикса Discord Voice
     zapret_sync_fake_blobs
     zapret_sync_hostlists
+    if [ -f /opt/zapret2-manager/templates/50-script.sh ] && [ -d /opt/zapret2 ]; then
+        mkdir -p /opt/zapret2/init.d/openwrt/custom.d 2>/dev/null
+        cp -f /opt/zapret2-manager/templates/50-script.sh /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
+        chmod 755 /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
+        if command -v uci >/dev/null 2>&1; then
+            uci set zapret2.config.DISABLE_CUSTOM='0'
+            uci set zapret2.config.NFQWS2_PORTS_TCP="${DEFAULT_PORTS_TCP}"
+            uci set zapret2.config.NFQWS2_PORTS_UDP="${DEFAULT_PORTS_UDP}"
+            uci commit zapret2 2>/dev/null
+        fi
+    fi
 
     rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
     tui_success "Zapret2-Manager успешно обновлен!"
@@ -289,19 +315,32 @@ main_menu() {
             doh_stat="${GREEN}DoH активен (https-dns-proxy)${NC}"
         fi
 
+        local cur_tcp cur_udp
+        cur_tcp=$(zapret_get_ports_tcp)
+        cur_udp=$(zapret_get_ports_udp)
+        local short_tcp short_udp
+        short_tcp=$(printf "%.40s" "${cur_tcp}")
+        [ ${#cur_tcp} -gt 40 ] && short_tcp="${short_tcp}..."
+        short_udp=$(printf "%.40s" "${cur_udp}")
+        [ ${#cur_udp} -gt 40 ] && short_udp="${short_udp}..."
+
         printf "  ${BOLD}Устройство :${NC} ${CYAN}%s${NC} (%s)\n" "${model}" "${owrt_ver}"
         printf "  ${BOLD}Zapret2    :${NC} %b\n" "${zapret_stat}"
+        printf "  ${BOLD}Порты TCP  :${NC} ${GREEN}%s${NC}\n" "${short_tcp}"
+        printf "  ${BOLD}Порты UDP  :${NC} ${GREEN}%s${NC}\n" "${short_udp}"
         printf "  ${BOLD}DNS / DoH  :${NC} %b\n" "${doh_stat}"
         printf "  ${DGRAY}───────────────────────────────────────────────────────────────────${NC}\n\n"
 
         printf "  ${BOLD}1.${NC} 🛡️ ${BLUE}Настройка и служба Zapret2${NC}    ${DGRAY}(статус, запуск, перезапуск, автозапуск)${NC}\n"
         printf "  ${BOLD}2.${NC} 🧬 ${MAGENTA}Подбор и генерация стратегий${NC}  ${DGRAY}(генератор Asterlike, автоподбор, тесты)${NC}\n"
         printf "  ${BOLD}3.${NC} 🎯 ${WHITE}Каталог готовых стратегий${NC}     ${DGRAY}(9 пресетов: General, Flowseal, VK...)${NC}\n"
-        printf "  ${BOLD}4.${NC} 🔐 ${GREEN}Настройка DNS и DoH${NC}           ${DGRAY}(Google, Quad9, Xbox, DNS.ru, Cloudflare)${NC}\n"
-        printf "  ${BOLD}5.${NC} 📁 ${YELLOW}Списки доменов и исключений${NC}   ${DGRAY}(YouTube, Discord, Исключения)${NC}\n"
-        printf "  ${BOLD}6.${NC} 🩺 Диагностика сети и блокировок     ${DGRAY}(проверка DPI RST/Freeze, вердикты)${NC}\n"
-        printf "  ${BOLD}7.${NC} 📦 Синхронизация файлов и блобов    ${DGRAY}(копирование fake-блобов в /opt/zapret2)${NC}\n"
-        printf "  ${BOLD}8.${NC} 🔄 ${CYAN}Обновить Zapret2-Manager${NC}        ${DGRAY}(автоматическое обновление из GitHub)${NC}\n"
+        printf "  ${BOLD}4.${NC} 🎧 ${MAGENTA}Исправление Discord Voice (звонки/RTC)${NC} ${DGRAY}(STUN + Media IP Discovery)${NC}\n"
+        printf "  ${BOLD}5.${NC} 🌐 ${CYAN}Порты перехвата TCP / UDP${NC}     ${DGRAY}(Cloudflare, Discord, игры: 80,443... / 443,50000...)${NC}\n"
+        printf "  ${BOLD}6.${NC} 🔐 ${GREEN}Настройка DNS и DoH${NC}           ${DGRAY}(Google, Quad9, Xbox, DNS.ru, Cloudflare)${NC}\n"
+        printf "  ${BOLD}7.${NC} 📁 ${YELLOW}Списки доменов и исключений${NC}   ${DGRAY}(YouTube, Discord, Исключения)${NC}\n"
+        printf "  ${BOLD}8.${NC} 🩺 Диагностика сети и блокировок     ${DGRAY}(проверка DPI RST/Freeze, вердикты)${NC}\n"
+        printf "  ${BOLD}9.${NC} 📦 Синхронизация файлов и блобов    ${DGRAY}(копирование fake-блобов в /opt/zapret2)${NC}\n"
+        printf "  ${BOLD}10.${NC} 🔄 Обновить Zapret2-Manager         ${DGRAY}(автоматическое обновление из GitHub)${NC}\n"
         printf "  ${BOLD}0.${NC} Выход\n\n"
 
         local choice
@@ -318,22 +357,28 @@ main_menu() {
                 manual_catalog_menu
                 ;;
             4)
-                run_dns_menu
+                run_discord_fix_menu
                 ;;
             5)
-                run_hostlists_menu
+                run_ports_menu
                 ;;
             6)
-                run_diagnostics
+                run_dns_menu
                 ;;
             7)
+                run_hostlists_menu
+                ;;
+            8)
+                run_diagnostics
+                ;;
+            9)
                 tui_info "Синхронизация блобов и списков в /opt/zapret2..."
                 zapret_sync_fake_blobs
                 zapret_sync_hostlists
                 tui_success "Файлы успешно синхронизированы!"
                 tui_pause
                 ;;
-            8|u|U)
+            10|u|U)
                 run_self_update
                 ;;
             0|q|Q)
@@ -367,6 +412,14 @@ case "$1" in
         run_test_discord_only
         exit 0
         ;;
+    --discord-voice|-dv|--voice)
+        discord_fix_apply
+        exit 0
+        ;;
+    --ports|-p)
+        run_ports_menu
+        exit 0
+        ;;
     --diagnostics|-d)
         run_diagnostics
         exit 0
@@ -391,6 +444,8 @@ case "$1" in
         printf "  z2m -g | --generate            Запуск двухпроходного генератора связок\n"
         printf "  z2m -yt | --youtube            Тестирование стратегий только для YouTube\n"
         printf "  z2m -dc | --discord            Тестирование стратегий только для Discord\n"
+        printf "  z2m -dv | --discord-voice      Установка исправления Discord Voice (звонки / RTC)\n"
+        printf "  z2m -p | --ports               Настройка перехватываемых портов TCP / UDP\n"
         printf "  z2m -d | --diagnostics         Диагностика доступности сервисов и DPI\n"
         printf "  z2m -u | --update              Автоматическое обновление программы\n"
         printf "  z2m -r | --restart             Перезапуск службы zapret2\n"

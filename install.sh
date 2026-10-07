@@ -236,8 +236,8 @@ exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
 EOF
 chmod +x "${BIN_LINK_ZSM}" 2>/dev/null
 
-# 10. Первичная синхронизация блобов, хостлистов и восстановление конфигурации
-mkdir -p /opt/zapret2/files/fake /opt/zapret2/ipset 2>/dev/null
+# 10. Первичная синхронизация блобов, хостлистов и установка фикса Discord Voice
+mkdir -p /opt/zapret2/files/fake /opt/zapret2/ipset /opt/zapret2/init.d/openwrt/custom.d 2>/dev/null
 if [ -d "${INSTALL_DIR}/fake" ]; then
     echo -e "${CYAN}Копируем fake-блобы и списки доменов в /opt/zapret2...${NC}"
     cp -f "${INSTALL_DIR}/fake/"*.bin /opt/zapret2/files/fake/ 2>/dev/null
@@ -248,20 +248,34 @@ if [ -d "${INSTALL_DIR}/lists" ]; then
     chmod 644 /opt/zapret2/ipset/*.txt 2>/dev/null
 fi
 
+# Установка объединенного фикса Discord Voice (custom.d script #50)
+if [ -f "${INSTALL_DIR}/templates/50-script.sh" ]; then
+    echo -e "${CYAN}Устанавливаем исправление Discord Voice (custom.d script #50)...${NC}"
+    cp -f "${INSTALL_DIR}/templates/50-script.sh" /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
+    chmod 755 /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
+    rm -f /opt/zapret2/init.d/openwrt/custom.d/50-stun4all* /opt/zapret2/init.d/openwrt/custom.d/50-discord* 2>/dev/null
+fi
+
 # Авто-исправление поврежденных двойных кавычек в конфигурации
 if [ -f /opt/zapret2/config ]; then
     if ! sh -n /opt/zapret2/config 2>/dev/null; then
         raw_opt=$(grep "^NFQWS2_OPT=" /opt/zapret2/config 2>/dev/null | sed 's/^NFQWS2_OPT=//' | tr -d '"')
         sed -i "s|^NFQWS2_OPT=.*|NFQWS2_OPT=\"${raw_opt}\"|" /opt/zapret2/config 2>/dev/null
     fi
+    sed -i 's/^DISABLE_CUSTOM=.*/DISABLE_CUSTOM=0/' /opt/zapret2/config 2>/dev/null
+    sed -i 's|^NFQWS2_PORTS_TCP=.*|NFQWS2_PORTS_TCP="80,443,2053,2083,2087,2096,8443"|' /opt/zapret2/config 2>/dev/null
+    sed -i 's|^NFQWS2_PORTS_UDP=.*|NFQWS2_PORTS_UDP="443,19294-19344,50000-65535"|' /opt/zapret2/config 2>/dev/null
 fi
 if command -v uci >/dev/null 2>&1; then
     cur_opt="$(uci -q get zapret2.config.NFQWS2_OPT)"
     if [ -n "${cur_opt}" ]; then
         clean_opt="$(echo "${cur_opt}" | tr -d '"')"
         uci set zapret2.config.NFQWS2_OPT="${clean_opt}"
-        uci commit zapret2 2>/dev/null
     fi
+    uci set zapret2.config.DISABLE_CUSTOM='0'
+    uci set zapret2.config.NFQWS2_PORTS_TCP='80,443,2053,2083,2087,2096,8443'
+    uci set zapret2.config.NFQWS2_PORTS_UDP='443,19294-19344,50000-65535'
+    uci commit zapret2 2>/dev/null
 fi
 
 # Перезапуск zapret2 с чистой конфигурацией если служба существует
