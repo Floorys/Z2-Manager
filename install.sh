@@ -106,10 +106,25 @@ else
 
     ZAPRET_BASE_URL="https://github.com/1andrevich/zapret2-openwrt/releases/latest/download"
 
+    # Определение списка совместимых резервных архитектур
+    FALLBACK_ARCH=""
+    case "${ARCH}" in
+        aarch64*) FALLBACK_ARCH="aarch64_generic" ;;
+        mipsel*)  FALLBACK_ARCH="mipsel_24kc" ;;
+        mips*)    FALLBACK_ARCH="mips_24kc" ;;
+        x86_64*)  FALLBACK_ARCH="x86_64" ;;
+        arm*)     FALLBACK_ARCH="arm_cortex-a7_neon-vfpv4" ;;
+        *)        FALLBACK_ARCH="" ;;
+    esac
+
     if [ "${PKG_MGR}" = "apk" ]; then
         mkdir -p /etc/apk/keys 2>/dev/null
         wget -q -O /etc/apk/keys/zapret2-1andrevich.pub "${ZAPRET_BASE_URL}/zapret2-1andrevich.pub" 2>/dev/null
         wget -q -O /tmp/zapret2.apk "${ZAPRET_BASE_URL}/zapret2_${ARCH}.apk" 2>/dev/null
+        if [ ! -s /tmp/zapret2.apk ] && [ -n "${FALLBACK_ARCH}" ]; then
+            echo -e "${YELLOW}Пробуем совместимую архитектуру ${FALLBACK_ARCH}...${NC}"
+            wget -q -O /tmp/zapret2.apk "${ZAPRET_BASE_URL}/zapret2_${FALLBACK_ARCH}.apk" 2>/dev/null
+        fi
         wget -q -O /tmp/luci-app-zapret2.apk "${ZAPRET_BASE_URL}/luci-app-zapret2.apk" 2>/dev/null
 
         if [ -s /tmp/zapret2.apk ]; then
@@ -121,18 +136,9 @@ else
     else
         # opkg
         wget -q -O /tmp/zapret2.ipk "${ZAPRET_BASE_URL}/zapret2_${ARCH}.ipk" 2>/dev/null
-        if [ ! -s /tmp/zapret2.ipk ]; then
-            case "${ARCH}" in
-                aarch64*) FALLBACK_ARCH="aarch64_generic" ;;
-                mipsel*)  FALLBACK_ARCH="mipsel_24kc" ;;
-                mips*)    FALLBACK_ARCH="mips_24kc" ;;
-                x86_64*)  FALLBACK_ARCH="x86_64" ;;
-                *)        FALLBACK_ARCH="" ;;
-            esac
-            if [ -n "${FALLBACK_ARCH}" ]; then
-                echo -e "${YELLOW}Пробуем совместимую архитектуру ${FALLBACK_ARCH}...${NC}"
-                wget -q -O /tmp/zapret2.ipk "${ZAPRET_BASE_URL}/zapret2_${FALLBACK_ARCH}.ipk" 2>/dev/null
-            fi
+        if [ ! -s /tmp/zapret2.ipk ] && [ -n "${FALLBACK_ARCH}" ]; then
+            echo -e "${YELLOW}Пробуем совместимую архитектуру ${FALLBACK_ARCH}...${NC}"
+            wget -q -O /tmp/zapret2.ipk "${ZAPRET_BASE_URL}/zapret2_${FALLBACK_ARCH}.ipk" 2>/dev/null
         fi
 
         wget -q -O /tmp/luci-app-zapret2.ipk "${ZAPRET_BASE_URL}/luci-app-zapret2.ipk" 2>/dev/null
@@ -305,5 +311,7 @@ echo -e "Для автоподбора лучшей стратегии:         
 echo -e "Для двухпроходного генератора:                   ${BOLD}${YELLOW}z2m -g${NC}"
 echo -e "Для проверки YouTube:                            ${BOLD}${YELLOW}z2m -yt${NC}"
 echo -e "Для проверки Discord:                            ${BOLD}${YELLOW}z2m -dc${NC}"
-echo -e "Для обновления программы:                        ${BOLD}${YELLOW}z2m -u${NC}"
+echo -e "Для центра обновлений (Zapret2 и Z2M):           ${BOLD}${YELLOW}z2m -u${NC}"
+echo -e "Для быстрого обновления пакета Zapret2:          ${BOLD}${YELLOW}z2m -uz${NC}"
+echo -e "Для проверки обновлений:                         ${BOLD}${YELLOW}z2m -cu${NC}"
 echo ""

@@ -40,6 +40,36 @@ zapret_status() {
     fi
 }
 
+# Detect installed Zapret2 package / binary version
+zapret_get_installed_version() {
+    local ver=""
+    if command -v opkg >/dev/null 2>&1; then
+        ver=$(opkg status zapret2 2>/dev/null | grep -i '^Version:' | awk '{print $2}')
+        [ -z "${ver}" ] && ver=$(opkg list-installed zapret2 2>/dev/null | awk '{print $3}')
+    fi
+    if [ -z "${ver}" ] && command -v apk >/dev/null 2>&1; then
+        ver=$(apk info -v zapret2 2>/dev/null | sed 's/^zapret2-//; s/-r[0-9]*$//')
+        [ -z "${ver}" ] && ver=$(apk list -I zapret2 2>/dev/null | awk '{print $1}' | sed 's/^zapret2-//; s/-r[0-9]*$//')
+    fi
+    if [ -z "${ver}" ]; then
+        local bin=""
+        if [ -x "/opt/zapret2/nfq2/nfqws2" ]; then
+            bin="/opt/zapret2/nfq2/nfqws2"
+        elif [ -x "/opt/zapret2/nfqws2" ]; then
+            bin="/opt/zapret2/nfqws2"
+        elif command -v nfqws2 >/dev/null 2>&1; then
+            bin="$(command -v nfqws2)"
+        fi
+        if [ -n "${bin}" ]; then
+            ver=$("${bin}" --version 2>/dev/null | grep -i 'github version' | awk '{print $3}' | tr -d 'v')
+        fi
+    fi
+    if [ -z "${ver}" ] && [ -f "${ZAPRET2_DIR}/version" ]; then
+        ver=$(cat "${ZAPRET2_DIR}/version" 2>/dev/null | tr -d '\r\n ')
+    fi
+    echo "${ver}" | sed 's/^v//'
+}
+
 zapret_start() {
     if [ -f "${ZAPRET2_SYNC}" ]; then
         chmod +x "${ZAPRET2_SYNC}" 2>/dev/null

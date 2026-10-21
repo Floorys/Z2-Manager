@@ -27,6 +27,7 @@ export Z2M_DIR
 . "${Z2M_DIR}/modules/dns.sh"
 . "${Z2M_DIR}/modules/discord_fix.sh"
 . "${Z2M_DIR}/modules/ports.sh"
+. "${Z2M_DIR}/modules/updater.sh"
 . "${Z2M_DIR}/strategies/catalog.sh"
 
 # 3. Авто-исправление конфигурации и первичная синхронизация при необходимости
@@ -48,7 +49,11 @@ service_menu() {
             pids=$(pidof nfqws2 2>/dev/null || pgrep nfqws2 2>/dev/null || pidof nfqws 2>/dev/null)
             st="${GREEN}Запущена (PID: ${pids})${NC}"
         fi
+        local cur_ver
+        cur_ver=$(zapret_get_installed_version)
+
         printf "  ${BOLD}Текущее состояние:${NC} %b\n" "${st}"
+        printf "  ${BOLD}Версия Zapret2   :${NC} ${CYAN}%s${NC}\n" "${cur_ver:-не установлена}"
 
         local cur_opt
         cur_opt=$(zapret_get_opt)
@@ -66,6 +71,7 @@ service_menu() {
         printf "  6. Отключить автозапуск\n"
         printf "  7. 🎧 Починить голос Discord (Voice / звонки / custom.d #50)\n"
         printf "  8. 🌐 Порты перехвата TCP / UDP (текущие: %s / %s)\n" "$(zapret_get_ports_tcp | cut -c1-15)..." "$(zapret_get_ports_udp | cut -c1-15)..."
+        printf "  9. 🔄 Проверить и обновить Zapret2 (1andrevich/zapret2-openwrt)\n"
         printf "  0. Назад в главное меню\n\n"
 
         local sc
@@ -113,6 +119,9 @@ service_menu() {
                 ;;
             8)
                 run_ports_menu
+                ;;
+            9)
+                zapret_run_update "" "0" "0"
                 ;;
             0)
                 break
@@ -195,95 +204,7 @@ manual_catalog_menu() {
     fi
 }
 
-# Функция самообновления из GitHub (в стиле StressOzz)
-run_self_update() {
-    tui_banner
-    tui_header "🔄 Обновление Zapret2-Manager"
-    tui_info "Загрузка актуальной версии из репозитория Floorys/Z2-Manager..."
-
-    local update_url="https://github.com/Floorys/Z2-Manager/archive/refs/heads/main.tar.gz"
-    local tmp_tar="/tmp/z2m_update.tar.gz"
-    local tmp_dir="/tmp/z2m_update_extracted"
-
-    rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
-    mkdir -p "${tmp_dir}" 2>/dev/null
-
-    if command -v curl >/dev/null 2>&1; then
-        curl -sSL -k --connect-timeout 8 -m 30 "${update_url}" -o "${tmp_tar}" 2>/dev/null
-    fi
-    if [ ! -s "${tmp_tar}" ] && command -v wget >/dev/null 2>&1; then
-        wget -q --timeout=15 -O "${tmp_tar}" "${update_url}" 2>/dev/null
-    fi
-
-    if [ ! -s "${tmp_tar}" ]; then
-        tui_error "Не удалось скачать архив обновления. Проверьте соединение с интернетом."
-        rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
-        tui_pause
-        return 1
-    fi
-
-    tui_info "Распаковка новой версии..."
-    if ! tar -xzf "${tmp_tar}" -C "${tmp_dir}" 2>/dev/null; then
-        tui_error "Ошибка распаковки архива обновления."
-        rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
-        tui_pause
-        return 1
-    fi
-
-    local src_folder
-    src_folder=$(find "${tmp_dir}" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n1)
-    if [ -z "${src_folder}" ] || [ ! -f "${src_folder}/zapret2-manager.sh" ]; then
-        tui_error "Структура обновленного архива некорректна."
-        rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
-        tui_pause
-        return 1
-    fi
-
-    tui_info "Установка файлов в /opt/zapret2-manager..."
-    mkdir -p /opt/zapret2-manager
-    cp -rf "${src_folder}"/* /opt/zapret2-manager/
-    find /opt/zapret2-manager -name "*.sh" -exec sed -i 's/\r$//' {} + 2>/dev/null
-    chmod +x /opt/zapret2-manager/*.sh 2>/dev/null
-    chmod +x /opt/zapret2-manager/core/*.sh 2>/dev/null
-    chmod +x /opt/zapret2-manager/modules/*.sh 2>/dev/null
-    chmod +x /opt/zapret2-manager/strategies/*.sh 2>/dev/null
-    chmod +x /opt/zapret2-manager/templates/*.sh 2>/dev/null
-
-    # Обновление команд z2m и zsm
-    cat << 'EOF' > /usr/bin/z2m
-#!/bin/sh
-exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
-EOF
-    chmod +x /usr/bin/z2m 2>/dev/null
-
-    cat << 'EOF' > /usr/bin/zsm
-#!/bin/sh
-exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
-EOF
-    chmod +x /usr/bin/zsm 2>/dev/null
-
-    # Синхронизация блобов, списков и фикса Discord Voice
-    zapret_sync_fake_blobs
-    zapret_sync_hostlists
-    if [ -f /opt/zapret2-manager/templates/50-script.sh ] && [ -d /opt/zapret2 ]; then
-        mkdir -p /opt/zapret2/init.d/openwrt/custom.d 2>/dev/null
-        cp -f /opt/zapret2-manager/templates/50-script.sh /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
-        chmod 755 /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
-        if command -v uci >/dev/null 2>&1; then
-            uci set zapret2.config.DISABLE_CUSTOM='0'
-            uci set zapret2.config.NFQWS2_PORTS_TCP="${DEFAULT_PORTS_TCP}"
-            uci set zapret2.config.NFQWS2_PORTS_UDP="${DEFAULT_PORTS_UDP}"
-            uci commit zapret2 2>/dev/null
-        fi
-    fi
-
-    rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
-    tui_success "Zapret2-Manager успешно обновлен!"
-    echo ""
-    tui_info "Перезапуск интерфейса менеджера..."
-    sleep 1
-    exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
-}
+# (Логика обновлений Zapret2 и Z2-Manager вынесена в модуль modules/updater.sh)
 
 # Главное меню в стиле StressOzz Zapret-Manager
 main_menu() {
@@ -300,6 +221,9 @@ main_menu() {
         [ -z "${owrt_ver}" ] && owrt_ver="OpenWrt"
 
         local zapret_stat="${RED}Остановлена${NC}"
+        local zap_ver
+        zap_ver=$(zapret_get_installed_version)
+
         if zapret_is_installed; then
             if zapret_is_running; then
                 local pids
@@ -309,6 +233,9 @@ main_menu() {
         else
             zapret_stat="${RED}Не установлена${NC}"
         fi
+
+        local zap_display="${zapret_stat}"
+        [ -n "${zap_ver}" ] && zap_display="${zapret_stat} ${CYAN}[v${zap_ver}]${NC}"
 
         local doh_stat="${YELLOW}Обычный (без шифрования)${NC}"
         if is_doh_running; then
@@ -325,7 +252,7 @@ main_menu() {
         [ ${#cur_udp} -gt 40 ] && short_udp="${short_udp}..."
 
         printf "  ${BOLD}Устройство :${NC} ${CYAN}%s${NC} (%s)\n" "${model}" "${owrt_ver}"
-        printf "  ${BOLD}Zapret2    :${NC} %b\n" "${zapret_stat}"
+        printf "  ${BOLD}Zapret2    :${NC} %b\n" "${zap_display}"
         printf "  ${BOLD}Порты TCP  :${NC} ${GREEN}%s${NC}\n" "${short_tcp}"
         printf "  ${BOLD}Порты UDP  :${NC} ${GREEN}%s${NC}\n" "${short_udp}"
         printf "  ${BOLD}DNS / DoH  :${NC} %b\n" "${doh_stat}"
@@ -340,7 +267,7 @@ main_menu() {
         printf "  ${BOLD}7.${NC} 📁 ${YELLOW}Списки доменов и исключений${NC}   ${DGRAY}(YouTube, Discord, Исключения)${NC}\n"
         printf "  ${BOLD}8.${NC} 🩺 Диагностика сети и блокировок     ${DGRAY}(проверка DPI RST/Freeze, вердикты)${NC}\n"
         printf "  ${BOLD}9.${NC} 📦 Синхронизация файлов и блобов    ${DGRAY}(копирование fake-блобов в /opt/zapret2)${NC}\n"
-        printf "  ${BOLD}10.${NC} 🔄 Обновить Zapret2-Manager         ${DGRAY}(автоматическое обновление из GitHub)${NC}\n"
+        printf "  ${BOLD}10.${NC} 🔄 Центр обновлений             ${DGRAY}(проверка и обновление Zapret2 и Z2-Manager)${NC}\n"
         printf "  ${BOLD}0.${NC} Выход\n\n"
 
         local choice
@@ -379,7 +306,7 @@ main_menu() {
                 tui_pause
                 ;;
             10|u|U)
-                run_self_update
+                run_updates_menu
                 ;;
             0|q|Q)
                 echo ""
@@ -432,24 +359,39 @@ case "$1" in
         zapret_status
         exit 0
         ;;
+    --update-zapret|-uz)
+        zapret_run_update "" "1" "1"
+        exit 0
+        ;;
+    --check-update|-c|-cu)
+        run_check_updates_cli
+        exit 0
+        ;;
+    --update-all|-ua)
+        run_update_all
+        exit 0
+        ;;
     --update|-u)
-        run_self_update
+        run_updates_menu
         exit 0
         ;;
     --help|-h)
         printf "Zapret2-Manager v%s\n\n" "${Z2M_VERSION}"
         printf "Использование:\n"
         printf "  z2m | zsm                       Интерактивное меню\n"
-        printf "  z2m -a | --autoselect          Автоподбор лучшей стратегии из каталога\n"
-        printf "  z2m -g | --generate            Запуск двухпроходного генератора связок\n"
+        printf "  z2m -a  | --autoselect         Автоподбор лучшей стратегии из каталога\n"
+        printf "  z2m -g  | --generate           Запуск двухпроходного генератора связок\n"
         printf "  z2m -yt | --youtube            Тестирование стратегий только для YouTube\n"
         printf "  z2m -dc | --discord            Тестирование стратегий только для Discord\n"
         printf "  z2m -dv | --discord-voice      Установка исправления Discord Voice (звонки / RTC)\n"
-        printf "  z2m -p | --ports               Настройка перехватываемых портов TCP / UDP\n"
-        printf "  z2m -d | --diagnostics         Диагностика доступности сервисов и DPI\n"
-        printf "  z2m -u | --update              Автоматическое обновление программы\n"
-        printf "  z2m -r | --restart             Перезапуск службы zapret2\n"
-        printf "  z2m -s | --status              Вывод статуса службы\n"
+        printf "  z2m -p  | --ports              Настройка перехватываемых портов TCP / UDP\n"
+        printf "  z2m -d  | --diagnostics        Диагностика доступности сервисов и DPI\n"
+        printf "  z2m -u  | --update             Центр обновлений (интерактивное меню)\n"
+        printf "  z2m -uz | --update-zapret     Обновление пакета Zapret2 до актуальной версии\n"
+        printf "  z2m -cu | --check-update      Быстрая проверка доступных обновлений\n"
+        printf "  z2m -ua | --update-all        Автоматическое обновление Zapret2 и Z2-Manager\n"
+        printf "  z2m -r  | --restart            Перезапуск службы zapret2\n"
+        printf "  z2m -s  | --status             Вывод статуса службы\n"
         exit 0
         ;;
     *)

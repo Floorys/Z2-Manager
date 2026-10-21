@@ -3,8 +3,13 @@
 # Zapret2-Manager: Global Configuration & Environment Constants
 # ==============================================================================
 
-Z2M_VERSION="1.2.0"
+Z2M_VERSION="1.3.0"
 Z2M_APP_NAME="Zapret2-Manager"
+Z2M_GITHUB_REPO="Floorys/Z2-Manager"
+
+# Upstream Zapret2 Repository (OpenWrt packages by 1andrevich)
+ZAPRET2_UPSTREAM_REPO="1andrevich/zapret2-openwrt"
+ZAPRET2_UPSTREAM_URL="https://github.com/1andrevich/zapret2-openwrt"
 
 # ANSI Colors for TUI
 NC="\033[0m"
