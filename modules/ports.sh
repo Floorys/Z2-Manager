@@ -4,10 +4,10 @@
 # Manages NFQWS2_PORTS_TCP and NFQWS2_PORTS_UDP in UCI / OpenWrt
 # ==============================================================================
 
-[ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
-. "${Z2M_DIR}/core/config.sh"
-. "${Z2M_DIR}/core/tui.sh"
-. "${Z2M_DIR}/core/zapret_service.sh"
+[ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+[ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
+[ -f "${Z2M_DIR}/core/tui.sh" ] && . "${Z2M_DIR}/core/tui.sh"
+[ -f "${Z2M_DIR}/core/zapret_service.sh" ] && . "${Z2M_DIR}/core/zapret_service.sh"
 
 run_ports_menu() {
     while true; do
@@ -18,17 +18,17 @@ run_ports_menu() {
         cur_tcp=$(zapret_get_ports_tcp)
         cur_udp=$(zapret_get_ports_udp)
 
-        printf "  ${BOLD}Текущие порты TCP:${NC} ${CYAN}%s${NC}\n" "${cur_tcp}"
-        printf "  ${BOLD}Текущие порты UDP:${NC} ${CYAN}%s${NC}\n" "${cur_udp}"
-        printf "  ${DGRAY}───────────────────────────────────────────────────────────────────${NC}\n\n"
+        printf "  %bТекущие порты TCP:%b %b%s%b\n" "${BOLD}" "${NC}" "${CYAN}" "${cur_tcp}" "${NC}"
+        printf "  %bТекущие порты UDP:%b %b%s%b\n" "${BOLD}" "${NC}" "${CYAN}" "${cur_udp}" "${NC}"
+        printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
 
         printf "  1. 🚀 Установить рекомендуемые порты (Web + Discord Voice + Cloudflare)\n"
-        printf "     ${DGRAY}TCP: %s${NC}\n" "${DEFAULT_PORTS_TCP}"
-        printf "     ${DGRAY}UDP: %s${NC}\n\n" "${DEFAULT_PORTS_UDP}"
+        printf "     %bTCP: %s%b\n" "${DGRAY}" "${DEFAULT_PORTS_TCP}" "${NC}"
+        printf "     %bUDP: %s%b\n\n" "${DGRAY}" "${DEFAULT_PORTS_UDP}" "${NC}"
 
         printf "  2. 🎮 Установить расширенные порты для игр и медиа (Xtreme Gaming)\n"
-        printf "     ${DGRAY}TCP: 80,443,2053,2083,2087,2096,8443,25565,27015-27030${NC}\n"
-        printf "     ${DGRAY}UDP: 443,19294-19344,27015-27030,50000-65535${NC}\n\n"
+        printf "     %bTCP: 80,443,2053,2083,2087,2096,8443,25565,27015-27030%b\n" "${DGRAY}" "${NC}"
+        printf "     %bUDP: 443,19294-19344,27015-27030,50000-65535%b\n\n" "${DGRAY}" "${NC}"
 
         printf "  3. ✏️ Задать порты TCP вручную\n"
         printf "  4. ✏️ Задать порты UDP вручную\n"
@@ -54,7 +54,7 @@ run_ports_menu() {
             3)
                 tui_banner
                 tui_header "Ввод портов TCP"
-                printf "Текущие порты TCP: ${CYAN}%s${NC}\n\n" "${cur_tcp}"
+                printf "Текущие порты TCP: %b%s%b\n\n" "${CYAN}" "${cur_tcp}" "${NC}"
                 local new_tcp
                 new_tcp=$(tui_prompt "Введите список портов TCP через запятую" "${cur_tcp}")
                 if [ -n "${new_tcp}" ]; then
@@ -66,7 +66,7 @@ run_ports_menu() {
             4)
                 tui_banner
                 tui_header "Ввод портов UDP"
-                printf "Текущие порты UDP: ${CYAN}%s${NC}\n\n" "${cur_udp}"
+                printf "Текущие порты UDP: %b%s%b\n\n" "${CYAN}" "${cur_udp}" "${NC}"
                 local new_udp
                 new_udp=$(tui_prompt "Введите список портов UDP через запятую" "${cur_udp}")
                 if [ -n "${new_udp}" ]; then

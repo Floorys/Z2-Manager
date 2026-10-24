@@ -1,23 +1,32 @@
 #!/bin/sh
 # ==============================================================================
 # Zapret2-Manager: Strategy Auto-Selector Module
-# Port of AutoSelectService.cs from Asterlike/zapret2UI
 # Tests curated catalog presets against goal endpoints
 # ==============================================================================
 
-[ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
-. "${Z2M_DIR}/core/config.sh"
-. "${Z2M_DIR}/core/tui.sh"
-. "${Z2M_DIR}/core/probe.sh"
-. "${Z2M_DIR}/core/zapret_service.sh"
-. "${Z2M_DIR}/strategies/catalog.sh"
+[ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+[ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
+[ -f "${Z2M_DIR}/core/tui.sh" ] && . "${Z2M_DIR}/core/tui.sh"
+[ -f "${Z2M_DIR}/core/probe.sh" ] && . "${Z2M_DIR}/core/probe.sh"
+[ -f "${Z2M_DIR}/core/zapret_service.sh" ] && . "${Z2M_DIR}/core/zapret_service.sh"
+[ -f "${Z2M_DIR}/strategies/catalog.sh" ] && . "${Z2M_DIR}/strategies/catalog.sh"
 
 run_strategy_autoselect() {
     tui_banner
     tui_header "⚡ Автоподбор лучшей стратегии из каталога"
 
     tui_info "Этот режим последовательно проверяет ${CATALOG_COUNT} проверенных стратегий каталога,"
-    tui_info "оценивает их работу на YouTube и Discord, и выбирает лучшую для вашего провайдера."
+    tui_info "оценивает их работу на YouTube и Discord (с повторами) и выбирает лучшую."
+    echo ""
+
+    # Task 9a: Router local traffic NFQUEUE notice
+    tui_warn "ВАЖНО: zapret2 фильтрует транзитный трафик клиентов (цепочка FORWARD)."
+    if [ -n "${CURL_INTERFACE:-}" ]; then
+        tui_info "Тестирование выполняется через интерфейс: ${CURL_INTERFACE}"
+    else
+        tui_info "Если исходящий трафик роутера не направлен в nfqws2 фаерволом, результаты"
+        tui_info "могут отличаться от клиентских. Для привязки задайте CURL_INTERFACE=br-lan."
+    fi
     echo ""
 
     if ! zapret_is_installed; then
@@ -26,11 +35,11 @@ run_strategy_autoselect() {
         return 1
     fi
 
-    # Ensure required blobs and lists are in place
+    # Task 2: Ensure required blobs and lists are in place
     zapret_sync_fake_blobs
     zapret_sync_hostlists
 
-    # Backup current configuration
+    # Task 9g: Backup current configuration BEFORE any modification
     local bak_file
     bak_file=$(zapret_backup_config)
     local interrupted=0
@@ -58,9 +67,8 @@ run_strategy_autoselect() {
             return 0
         fi
 
-        local name tagline opt
+        local name opt
         name=$(catalog_get_name "${i}")
-        tagline=$(catalog_get_tagline "${i}")
         opt=$(catalog_get_opt "${i}")
 
         if [ -z "${opt}" ]; then
@@ -70,9 +78,10 @@ run_strategy_autoselect() {
 
         local short_name
         short_name=$(printf "%.34s" "${name}")
-        printf "%-36s ${YELLOW}%-10s${NC} ${DGRAY}%-10s${NC} ${YELLOW}⏳ Тест...${NC}\r" "${short_name}" "..." "..."
+        printf "%-36s %b%-10s%b %b%-10s%b %b⏳ Тест...%b\r" \
+            "${short_name}" "${YELLOW}" "..." "${NC}" "${DGRAY}" "..." "${NC}" "${YELLOW}" "${NC}"
 
-        # Apply candidate strategy
+        # Apply candidate strategy (zapret_set_opt includes restart and 2s pause)
         zapret_set_opt "${opt}"
 
         if [ "${interrupted}" -eq 1 ]; then
@@ -81,26 +90,34 @@ run_strategy_autoselect() {
         fi
 
         if ! zapret_is_running; then
-            tui_print_result_row "${name}" "0" "2" "2"
+            tui_print_result_row "${name}" "0" "5" "5"
             i=$(( i + 1 ))
             continue
         fi
 
-        # Fast probe of goal hosts
-        local p_res
-        p_res=$(probe_host_list "${ALL_PROBE_HOSTS}")
+        # Task 9d: Probe goal hosts with 2 repeats for stability
+        local p_res1 p_res2
+        p_res1=$(probe_host_list "${ALL_PROBE_HOSTS}")
+        sleep 1
+        p_res2=$(probe_host_list "${ALL_PROBE_HOSTS}")
 
         if [ "${interrupted}" -eq 1 ]; then
             tui_pause
             return 0
         fi
 
-        local ok tot score max_score
-        ok=$(echo "${p_res}" | awk '{print $1}')
-        tot=$(echo "${p_res}" | awk '{print $2}')
-        score=$(echo "${p_res}" | awk '{print $3}')
-        max_score=$(echo "${p_res}" | awk '{print $4}')
+        local ok1 tot1 score1 ok2 score2
+        ok1=$(echo "${p_res1}" | awk '{print $1}')
+        tot1=$(echo "${p_res1}" | awk '{print $2}')
+        score1=$(echo "${p_res1}" | awk '{print $3}')
 
+        ok2=$(echo "${p_res2}" | awk '{print $1}')
+        score2=$(echo "${p_res2}" | awk '{print $3}')
+
+        # Combined average score
+        local ok=$(( (ok1 + ok2) / 2 ))
+        local score=$(( (score1 + score2) / 2 ))
+        local tot="${tot1}"
         local fail=$(( tot - ok ))
 
         # Print table row replacing the temporary status
@@ -113,8 +130,8 @@ run_strategy_autoselect() {
             best_idx="${i}"
         fi
 
-        # Early exit if candidate passed 100% of all checks
-        if [ "${fail}" -eq 0 ]; then
+        # Early exit if candidate passed 100% of all checks on both repeats
+        if [ "${fail}" -eq 0 ] && [ "${score}" -ge 25 ]; then
             tui_success "Стратегия #${i} («${name}») показала 100% результат! Ранний выход."
             break
         fi
@@ -127,6 +144,19 @@ run_strategy_autoselect() {
         return 0
     fi
 
+    # Task 9j: If no strategy passed threshold (> 0), restore backup and inform user
+    if [ "${best_score}" -le 0 ]; then
+        echo ""
+        tui_error "Ни одна стратегия из каталога не прошла проверки доступности!"
+        tui_warn "Восстанавливаем исходную конфигурацию..."
+        zapret_restore_config "${bak_file}"
+        rm -f "${bak_file}" 2>/dev/null
+        trap - INT TERM
+        tui_info "Рекомендация: проверьте DNS (DoH в меню 6) или запустите полный генератор (z2m -g)."
+        tui_pause
+        return 1
+    fi
+
     # Apply the winning strategy
     local win_name win_opt win_tagline
     win_name=$(catalog_get_name "${best_idx}")
@@ -135,7 +165,7 @@ run_strategy_autoselect() {
 
     zapret_set_opt "${win_opt}"
 
-    # Remove temporary backup
+    # Remove temporary backup and clear trap
     rm -f "${bak_file}" 2>/dev/null
     trap - INT TERM
 
@@ -144,13 +174,17 @@ run_strategy_autoselect() {
     tui_success "Название : ${win_name}"
     [ -n "${win_tagline}" ] && tui_info "Описание : ${win_tagline}"
     tui_info "Конфигурация успешно сохранена и работает."
+    echo ""
+    tui_info "Примечание: Проверка curl тестирует только TCP/TLS веб-трафик."
+    tui_info "Для голосовых звонков Discord примените фикс: Главное меню -> Пункт 4."
+    echo ""
     tui_pause
 }
 
 run_test_youtube_only() {
     tui_banner
     tui_header "▶️ Тестирование стратегий для YouTube"
-    tui_info "Проверка стратегий каталога на доступность YouTube..."
+    tui_info "Проверка стратегий каталога на доступность YouTube (с повторами)..."
     echo ""
 
     if ! zapret_is_installed; then
@@ -191,7 +225,8 @@ run_test_youtube_only() {
 
         local short_name
         short_name=$(printf "%.34s" "${name}")
-        printf "%-36s ${YELLOW}%-10s${NC} ${DGRAY}%-10s${NC} ${YELLOW}⏳ Тест...${NC}\r" "${short_name}" "..." "..."
+        printf "%-36s %b%-10s%b %b%-10s%b %b⏳ Тест...%b\r" \
+            "${short_name}" "${YELLOW}" "..." "${NC}" "${DGRAY}" "..." "${NC}" "${YELLOW}" "${NC}"
 
         zapret_set_opt "${opt}"
 
@@ -201,24 +236,34 @@ run_test_youtube_only() {
         fi
 
         if ! zapret_is_running; then
-            tui_print_result_row "${name}" "0" "2" "2"
+            tui_print_result_row "${name}" "0" "3" "3"
             i=$(( i + 1 ))
             continue
         fi
 
-        local p_res ok tot score
-        p_res=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
+        local p_res1 p_res2
+        p_res1=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
+        sleep 1
+        p_res2=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
 
         if [ "${interrupted}" -eq 1 ]; then
             tui_pause
             return 0
         fi
 
-        ok=$(echo "${p_res}" | awk '{print $1}')
-        tot=$(echo "${p_res}" | awk '{print $2}')
-        score=$(echo "${p_res}" | awk '{print $3}')
+        local ok1 tot1 score1 ok2 score2
+        ok1=$(echo "${p_res1}" | awk '{print $1}')
+        tot1=$(echo "${p_res1}" | awk '{print $2}')
+        score1=$(echo "${p_res1}" | awk '{print $3}')
 
+        ok2=$(echo "${p_res2}" | awk '{print $1}')
+        score2=$(echo "${p_res2}" | awk '{print $3}')
+
+        local ok=$(( (ok1 + ok2) / 2 ))
+        local score=$(( (score1 + score2) / 2 ))
+        local tot="${tot1}"
         local fail=$(( tot - ok ))
+
         tui_print_result_row "${name}" "${ok}" "${fail}" "${tot}"
 
         if [ "${best_score}" -eq -1 ] || [ "${score}" -gt "${best_score}" ]; then
@@ -226,7 +271,7 @@ run_test_youtube_only() {
             best_idx="${i}"
         fi
 
-        [ "${fail}" -eq 0 ] && break
+        [ "${fail}" -eq 0 ] && [ "${score}" -ge 15 ] && break
 
         i=$(( i + 1 ))
     done
@@ -234,6 +279,15 @@ run_test_youtube_only() {
     if [ "${interrupted}" -eq 1 ]; then
         tui_pause
         return 0
+    fi
+
+    if [ "${best_score}" -le 0 ]; then
+        tui_error "Ни одна стратегия для YouTube не сработала!"
+        zapret_restore_config "${bak_file}"
+        rm -f "${bak_file}" 2>/dev/null
+        trap - INT TERM
+        tui_pause
+        return 1
     fi
 
     local win_name win_opt
@@ -251,7 +305,7 @@ run_test_youtube_only() {
 run_test_discord_only() {
     tui_banner
     tui_header "💬 Тестирование стратегий для Discord"
-    tui_info "Проверка стратегий каталога на доступность Discord..."
+    tui_info "Проверка стратегий каталога на доступность Discord (с повторами)..."
     echo ""
 
     if ! zapret_is_installed; then
@@ -292,7 +346,8 @@ run_test_discord_only() {
 
         local short_name
         short_name=$(printf "%.34s" "${name}")
-        printf "%-36s ${YELLOW}%-10s${NC} ${DGRAY}%-10s${NC} ${YELLOW}⏳ Тест...${NC}\r" "${short_name}" "..." "..."
+        printf "%-36s %b%-10s%b %b%-10s%b %b⏳ Тест...%b\r" \
+            "${short_name}" "${YELLOW}" "..." "${NC}" "${DGRAY}" "..." "${NC}" "${YELLOW}" "${NC}"
 
         zapret_set_opt "${opt}"
 
@@ -302,24 +357,34 @@ run_test_discord_only() {
         fi
 
         if ! zapret_is_running; then
-            tui_print_result_row "${name}" "0" "2" "2"
+            tui_print_result_row "${name}" "0" "3" "3"
             i=$(( i + 1 ))
             continue
         fi
 
-        local p_res ok tot score
-        p_res=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
+        local p_res1 p_res2
+        p_res1=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
+        sleep 1
+        p_res2=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
 
         if [ "${interrupted}" -eq 1 ]; then
             tui_pause
             return 0
         fi
 
-        ok=$(echo "${p_res}" | awk '{print $1}')
-        tot=$(echo "${p_res}" | awk '{print $2}')
-        score=$(echo "${p_res}" | awk '{print $3}')
+        local ok1 tot1 score1 ok2 score2
+        ok1=$(echo "${p_res1}" | awk '{print $1}')
+        tot1=$(echo "${p_res1}" | awk '{print $2}')
+        score1=$(echo "${p_res1}" | awk '{print $3}')
 
+        ok2=$(echo "${p_res2}" | awk '{print $1}')
+        score2=$(echo "${p_res2}" | awk '{print $3}')
+
+        local ok=$(( (ok1 + ok2) / 2 ))
+        local score=$(( (score1 + score2) / 2 ))
+        local tot="${tot1}"
         local fail=$(( tot - ok ))
+
         tui_print_result_row "${name}" "${ok}" "${fail}" "${tot}"
 
         if [ "${best_score}" -eq -1 ] || [ "${score}" -gt "${best_score}" ]; then
@@ -327,7 +392,7 @@ run_test_discord_only() {
             best_idx="${i}"
         fi
 
-        [ "${fail}" -eq 0 ] && break
+        [ "${fail}" -eq 0 ] && [ "${score}" -ge 15 ] && break
 
         i=$(( i + 1 ))
     done
@@ -335,6 +400,15 @@ run_test_discord_only() {
     if [ "${interrupted}" -eq 1 ]; then
         tui_pause
         return 0
+    fi
+
+    if [ "${best_score}" -le 0 ]; then
+        tui_error "Ни одна стратегия для Discord не сработала!"
+        zapret_restore_config "${bak_file}"
+        rm -f "${bak_file}" 2>/dev/null
+        trap - INT TERM
+        tui_pause
+        return 1
     fi
 
     local win_name win_opt
@@ -362,11 +436,11 @@ run_test_current_strategy() {
     local short_opt
     short_opt=$(printf "%.50s" "${cur_opt}")
     [ ${#cur_opt} -gt 50 ] && short_opt="${short_opt}..."
-    printf "  ${BOLD}Текущие параметры:${NC} ${CYAN}%s${NC}\n\n" "${short_opt:-по умолчанию}"
+    printf "  %bТекущие параметры:%b %b%s%b\n\n" "${BOLD}" "${NC}" "${CYAN}" "${short_opt:-по умолчанию}" "${NC}"
 
     tui_header "Результаты проверки доступности (набор сервисов):"
-    printf "${BOLD}%-24s %-18s %-12s %-12s${NC}\n" "Хост" "Категория" "HTTP Доступ" "TLS Рукопожатие"
-    printf "${DGRAY}───────────────────────────────────────────────────────────────────${NC}\n"
+    printf "%b%-24s %-18s %-12s %-12s%b\n" "${BOLD}" "Хост" "Категория" "HTTP Доступ" "TLS Рукопожатие" "${NC}"
+    printf "%b───────────────────────────────────────────────────────────────────%b\n" "${DGRAY}" "${NC}"
 
     for h in ${DIAGNOSTIC_HOSTS}; do
         local cat_name
@@ -377,18 +451,17 @@ run_test_current_strategy() {
 
         printf "%-24s %-18s " "${h}" "${cat_name}"
         if [ "${ok_http}" -eq 1 ]; then
-            printf "${GREEN}%-12s${NC} " "✓ OK"
+            printf "%b%-12s%b " "${GREEN}" "✓ OK" "${NC}"
         else
-            printf "${RED}%-12s${NC} " "✗ Блок"
+            printf "%b%-12s%b " "${RED}" "✗ Блок" "${NC}"
         fi
         if [ "${ok_tls}" -eq 1 ]; then
-            printf "${GREEN}%-12s${NC}\n" "✓ OK"
+            printf "%b%-12s%b\n" "${GREEN}" "✓ OK" "${NC}"
         else
-            printf "${RED}%-12s${NC}\n" "✗ Сбой"
+            printf "%b%-12s%b\n" "${RED}" "✗ Сбой" "${NC}"
         fi
     done
 
     echo ""
     tui_pause
 }
-

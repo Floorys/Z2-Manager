@@ -4,10 +4,10 @@
 # Manage domain lists and exclusions in /opt/zapret2/ipset
 # ==============================================================================
 
-[ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
-. "${Z2M_DIR}/core/config.sh"
-. "${Z2M_DIR}/core/tui.sh"
-. "${Z2M_DIR}/core/zapret_service.sh"
+[ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+[ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
+[ -f "${Z2M_DIR}/core/tui.sh" ] && . "${Z2M_DIR}/core/tui.sh"
+[ -f "${Z2M_DIR}/core/zapret_service.sh" ] && . "${Z2M_DIR}/core/zapret_service.sh"
 
 run_hostlists_menu() {
     while true; do
@@ -20,10 +20,10 @@ run_hostlists_menu() {
         [ -f "${ZAPRET2_IPSET_DIR}/zapret-hosts-user-exclude.txt" ] && ex_count=$(grep -c "^[^#]" "${ZAPRET2_IPSET_DIR}/zapret-hosts-user-exclude.txt" 2>/dev/null || echo 0)
         [ -f "${ZAPRET2_IPSET_DIR}/zapret-hosts-user.txt" ] && usr_count=$(grep -c "^[^#]" "${ZAPRET2_IPSET_DIR}/zapret-hosts-user.txt" 2>/dev/null || echo 0)
 
-        printf "  1. Домены Discord      ${DGRAY}(активно: %s)${NC}\n" "${dc_count}"
-        printf "  2. Домены YouTube      ${DGRAY}(активно: %s)${NC}\n" "${yt_count}"
-        printf "  3. Исключения (RU)     ${DGRAY}(активно: %s)${NC}\n" "${ex_count}"
-        printf "  4. Пользовательский    ${DGRAY}(активно: %s)${NC}\n" "${usr_count}"
+        printf "  1. Домены Discord      %b(активно: %s)%b\n" "${DGRAY}" "${dc_count}" "${NC}"
+        printf "  2. Домены YouTube      %b(активно: %s)%b\n" "${DGRAY}" "${yt_count}" "${NC}"
+        printf "  3. Исключения (RU)     %b(активно: %s)%b\n" "${DGRAY}" "${ex_count}" "${NC}"
+        printf "  4. Пользовательский    %b(активно: %s)%b\n" "${DGRAY}" "${usr_count}" "${NC}"
         printf "  5. Добавить свой домен в список\n"
         printf "  6. Перезаписать стандартные списки из комплекта\n"
         printf "  0. Назад в главное меню\n\n"
@@ -73,7 +73,7 @@ _view_list() {
         local total
         total=$(wc -l < "${file}")
         if [ "${total}" -gt 30 ]; then
-            printf "\n${DGRAY}... и еще %s строк${NC}\n" "$(( total - 30 ))"
+            printf "\n%b... и еще %s строк%b\n" "${DGRAY}" "$(( total - 30 ))" "${NC}"
         fi
     else
         tui_warn "Файл не найден."

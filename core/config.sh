@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2034
 # ==============================================================================
 # Zapret2-Manager: Global Configuration & Environment Constants
 # ==============================================================================
@@ -44,21 +45,36 @@ DEFAULT_PORTS_TCP="80,443,2053,2083,2087,2096,8443"
 DEFAULT_PORTS_UDP="443,19294-19344,50000-65535"
 
 # Manager Runtime Directories
-if [ -z "${Z2M_DIR}" ] || [ ! -d "${Z2M_DIR}/core" ]; then
-    if [ -d "/opt/zapret2-manager/core" ]; then
+# If Z2M_DIR is not exported, resolve relative to this file
+if [ -z "${Z2M_DIR:-}" ] || [ ! -d "${Z2M_DIR}/core" ]; then
+    _cfg_target="$0"
+    while [ -L "${_cfg_target}" ]; do
+        _cfg_link="$(readlink "${_cfg_target}" 2>/dev/null)" || break
+        case "${_cfg_link}" in
+            /*) _cfg_target="${_cfg_link}" ;;
+            *)  _cfg_target="$(dirname "${_cfg_target}")/${_cfg_link}" ;;
+        esac
+    done
+    _cfg_dir="$(cd "$(dirname "${_cfg_target}")" >/dev/null 2>&1 && pwd)"
+    if [ -f "${_cfg_dir}/config.sh" ]; then
+        Z2M_DIR="$(cd "${_cfg_dir}/.." >/dev/null 2>&1 && pwd)"
+    elif [ -f "${_cfg_dir}/core/config.sh" ]; then
+        Z2M_DIR="${_cfg_dir}"
+    elif [ -d "/opt/zapret2-manager/core" ]; then
         Z2M_DIR="/opt/zapret2-manager"
-    elif [ -f "$(dirname "$0")/core/config.sh" ]; then
-        Z2M_DIR="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
-    elif [ -f "$(dirname "$0")/config.sh" ]; then
-        Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
     else
         Z2M_DIR="/opt/zapret2-manager"
     fi
+    unset _cfg_target _cfg_link _cfg_dir
 fi
 export Z2M_DIR
+
 Z2M_TMP="/tmp/zapret2-manager"
 Z2M_BACKUP_DIR="${Z2M_DIR}/backups"
 Z2M_LOG_FILE="${Z2M_TMP}/z2m.log"
+
+# Network test interface (optional: e.g. "br-lan" or LAN IP to route through FORWARD rules)
+CURL_INTERFACE="${CURL_INTERFACE:-}"
 
 # Probing target endpoints (Expanded suite inspired by StressOzz)
 DISCORD_PROBE_HOSTS="discord.com gateway.discord.gg cdn.discordapp.com"
@@ -75,7 +91,7 @@ DIAGNOSTIC_HOSTS="www.youtube.com googlevideo.com i.ytimg.com discord.com gatewa
 BROWSER_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
 # Russian ISP Block Page Signatures (Russian TSPU/DPI stub-page fingerprints)
-BLOCK_MARKERS="доступ ограничен|доступ заблокирован|ресурс заблокирован|единый реестр|запрещен на территории|warning.rt.ru|eais.rkn.gov.ru|blocked by"
+BLOCK_MARKERS="доступ ограничен|доступ заблокирован|ресурс заблокирован|единый реестр|запрещен на территории|warning.rt.ru|eais.rkn.gov.ru|blocked by|block.mts.ru|blackhole"
 
 # Setup temporary directory
 mkdir -p "${Z2M_TMP}" 2>/dev/null

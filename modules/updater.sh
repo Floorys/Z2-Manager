@@ -5,7 +5,7 @@
 # and self-updates for Zapret2-Manager (Floorys/Z2-Manager)
 # ==============================================================================
 
-if [ -z "${Z2M_DIR}" ] || [ ! -d "${Z2M_DIR}/core" ]; then
+if [ -z "${Z2M_DIR:-}" ] || [ ! -d "${Z2M_DIR}/core" ]; then
     if [ -d "/opt/zapret2-manager/core" ]; then
         Z2M_DIR="/opt/zapret2-manager"
     elif [ -f "$(dirname "$0")/core/config.sh" ]; then
@@ -105,8 +105,9 @@ zapret_detect_system_arch() {
         SYSTEM_ARCH="$(apk --print-arch 2>/dev/null)"
     fi
     if [ -z "${SYSTEM_ARCH}" ] && [ -f /etc/os-release ]; then
+        # shellcheck disable=SC1091
         . /etc/os-release 2>/dev/null
-        SYSTEM_ARCH="${OPENWRT_ARCH}"
+        SYSTEM_ARCH="${OPENWRT_ARCH:-}"
     fi
     if [ -z "${SYSTEM_ARCH}" ] && [ -f /etc/openwrt_release ]; then
         SYSTEM_ARCH="$(grep '^DISTRIB_ARCH=' /etc/openwrt_release 2>/dev/null | cut -d"'" -f2)"
@@ -204,8 +205,8 @@ zapret_run_update() {
     fi
 
     echo ""
-    printf "  ${BOLD}Текущая версия Zapret2 :${NC} ${CYAN}%s${NC}\n" "${cur_ver:-не установлена}"
-    printf "  ${BOLD}Целевая версия Zapret2 :${NC} ${GREEN}v%s${NC}\n\n" "${target_ver}"
+    printf "  %bТекущая версия Zapret2 :%b %b%s%b\n" "${BOLD}" "${NC}" "${CYAN}" "${cur_ver:-не установлена}" "${NC}"
+    printf "  %bЦелевая версия Zapret2 :%b %bv%s%b\n\n" "${BOLD}" "${NC}" "${GREEN}" "${target_ver}" "${NC}"
 
     if [ -n "${cur_ver}" ] && [ "${force}" != "1" ]; then
         vercmp "${cur_ver}" "${target_ver}"
@@ -236,11 +237,11 @@ zapret_run_update() {
     fi
 
     zapret_detect_system_arch
-    tui_info "Архитектура устройства: ${GREEN}${SYSTEM_ARCH}${NC} | Менеджер: ${GREEN}${SYSTEM_PKG_MGR}${NC}"
+    printf "%bℹ Архитектура устройства: %b%s%b | Менеджер: %b%s%b%b\n" \
+        "${CYAN}" "${GREEN}" "${SYSTEM_ARCH}" "${NC}" "${GREEN}" "${SYSTEM_PKG_MGR}" "${NC}" "${NC}"
 
-    local tmp_dir="/tmp/zapret2_update_$$"
-    rm -rf "${tmp_dir}" 2>/dev/null
-    mkdir -p "${tmp_dir}" 2>/dev/null
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${Z2M_TMP}/zapret2_update.XXXXXX")
 
     local repo="${ZAPRET2_UPSTREAM_REPO:-1andrevich/zapret2-openwrt}"
     local tag_clean="${target_ver#v}"
@@ -260,7 +261,7 @@ zapret_run_update() {
             if [ "${fsz}" -gt 20000 ]; then
                 pkg_downloaded="${target_file}"
                 matched_arch="${cand}"
-                tui_success "Загружен пакет zapret2_${cand}.${SYSTEM_PKG_EXT} (${fsz} байт)"
+                tui_success "Загружен пакет zapret2_${matched_arch}.${SYSTEM_PKG_EXT} (${fsz} байт)"
                 break
             fi
         fi
@@ -333,7 +334,8 @@ zapret_run_update() {
     if zapret_is_running; then
         local new_pid
         new_pid=$(pidof nfqws2 2>/dev/null || pgrep nfqws2 2>/dev/null || pidof nfqws 2>/dev/null)
-        tui_success "Zapret2 успешно обновлен до версии ${GREEN}v${new_installed_ver:-${target_ver}}${NC}!"
+        printf "%b✔ Zapret2 успешно обновлен до версии %bv%s%b!%b\n" \
+            "${GREEN}" "${GREEN}" "${new_installed_ver:-${target_ver}}" "${NC}" "${NC}"
         tui_info "Служба запущена и перехватывает трафик (PID: ${new_pid})."
     else
         tui_warn "Пакет Zapret2 установлен (v${new_installed_ver:-${target_ver}}), но процесс nfqws2 еще не запущен."
@@ -351,11 +353,10 @@ run_self_update() {
     tui_info "Загрузка актуальной версии из репозитория ${Z2M_GITHUB_REPO:-Floorys/Z2-Manager}..."
 
     local update_url="https://github.com/${Z2M_GITHUB_REPO:-Floorys/Z2-Manager}/archive/refs/heads/main.tar.gz"
-    local tmp_tar="/tmp/z2m_update.tar.gz"
-    local tmp_dir="/tmp/z2m_update_extracted"
-
-    rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
-    mkdir -p "${tmp_dir}" 2>/dev/null
+    local tmp_tar
+    tmp_tar=$(mktemp "${Z2M_TMP}/z2m_update.XXXXXX.tar.gz")
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${Z2M_TMP}/z2m_extracted.XXXXXX")
 
     if command -v curl >/dev/null 2>&1; then
         curl -sSL -k --connect-timeout 8 -m 30 "${update_url}" -o "${tmp_tar}" 2>/dev/null
@@ -449,13 +450,13 @@ run_update_all() {
 
 # CLI output for quick check command (z2m -cu / z2m --check-update)
 run_check_updates_cli() {
-    printf "${BOLD}=== Проверка обновлений Zapret2-Manager ===${NC}\n\n"
+    printf "%b=== Проверка обновлений Zapret2-Manager ===%b\n\n" "${BOLD}" "${NC}"
 
     local cur_zap latest_zap
     cur_zap=$(zapret_get_installed_version)
     latest_zap=$(zapret_get_latest_version)
 
-    printf "  ${BOLD}Zapret2 (1andrevich/zapret2-openwrt):${NC}\n"
+    printf "  %bZapret2 (1andrevich/zapret2-openwrt):%b\n" "${BOLD}" "${NC}"
     printf "    Установлена : %s\n" "${cur_zap:-не установлена}"
     printf "    Актуальная  : %s\n" "${latest_zap:-не удалось получить}"
 
@@ -463,18 +464,18 @@ run_check_updates_cli() {
         vercmp "${cur_zap}" "${latest_zap}"
         local cmp=$?
         if [ "$cmp" -eq 2 ]; then
-            printf "    Статус      : ${GREEN}${BOLD}Доступно обновление до v%s!${NC} (запустите: z2m -uz)\n" "${latest_zap}"
+            printf "    Статус      : %b%bДоступно обновление до v%s!%b (запустите: z2m -uz)\n" "${GREEN}" "${BOLD}" "${latest_zap}" "${NC}"
         elif [ "$cmp" -eq 0 ]; then
-            printf "    Статус      : ${GREEN}Установлена актуальная версия ✔${NC}\n"
+            printf "    Статус      : %bУстановлена актуальная версия ✔%b\n" "${GREEN}" "${NC}"
         else
-            printf "    Статус      : ${YELLOW}Установлена тестовая версия (новее релиза)${NC}\n"
+            printf "    Статус      : %bУстановлена тестовая версия (новее релиза)%b\n" "${YELLOW}" "${NC}"
         fi
     elif [ -z "${cur_zap}" ] && [ -n "${latest_zap}" ]; then
-        printf "    Статус      : ${RED}Пакет не установлен${NC} (запустите: z2m -uz для установки v%s)\n" "${latest_zap}"
+        printf "    Статус      : %bПакет не установлен%b (запустите: z2m -uz для установки v%s)\n" "${RED}" "${NC}" "${latest_zap}"
     fi
     echo ""
 
-    printf "  ${BOLD}Zapret2-Manager (Floorys/Z2-Manager):${NC}\n"
+    printf "  %bZapret2-Manager (Floorys/Z2-Manager):%b\n" "${BOLD}" "${NC}"
     printf "    Установлена : v%s\n" "${Z2M_VERSION}"
     printf "    Обновление  : выполните 'z2m -u' для открытия центра обновлений\n\n"
 }
@@ -501,8 +502,8 @@ run_updates_menu() {
         tui_banner
         tui_header "🔄 Центр обновлений (Zapret2 и Z2-Manager)"
 
-        printf "  ${BOLD}Устройство      :${NC} ${CYAN}%s${NC} (%s)\n" "${model}" "${owrt_ver}"
-        printf "  ${BOLD}Архитектура     :${NC} ${GREEN}%s${NC} (${SYSTEM_PKG_MGR})\n" "${SYSTEM_ARCH}"
+        printf "  %bУстройство      :%b %b%s%b (%s)\n" "${BOLD}" "${NC}" "${CYAN}" "${model}" "${NC}" "${owrt_ver}"
+        printf "  %bАрхитектура     :%b %b%s%b (%s)\n" "${BOLD}" "${NC}" "${GREEN}" "${SYSTEM_ARCH}" "${NC}" "${SYSTEM_PKG_MGR}"
 
         local zap_status_badge=""
         local can_update_zapret=0
@@ -524,19 +525,21 @@ run_updates_menu() {
             fi
         fi
 
-        printf "  ${BOLD}Zapret2         :${NC} %b\n" "${zap_status_badge}"
-        printf "  ${BOLD}Zapret2-Manager :${NC} ${CYAN}v%s${NC} ${DGRAY}(Floorys/Z2-Manager)${NC}\n" "${Z2M_VERSION}"
-        printf "  ${DGRAY}───────────────────────────────────────────────────────────────────${NC}\n\n"
+        printf "  %bZapret2         :%b %b\n" "${BOLD}" "${NC}" "${zap_status_badge}"
+        printf "  %bZapret2-Manager :%b %bv%s%b %b(Floorys/Z2-Manager)%b\n" "${BOLD}" "${NC}" "${CYAN}" "${Z2M_VERSION}" "${NC}" "${DGRAY}" "${NC}"
+        printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
 
         if [ "${can_update_zapret}" -eq 1 ]; then
-            printf "  ${BOLD}1.${NC} 🛡️ ${GREEN}${BOLD}Обновить Zapret2 до v%s${NC}  ${DGRAY}(скачать и установить пакет от 1andrevich)${NC}\n" "${latest_zap:-latest}"
+            printf "  %b1.%b 🛡️ %b%bОбновить Zapret2 до v%s%b  %b(скачать и установить пакет от 1andrevich)%b\n" \
+                "${BOLD}" "${NC}" "${GREEN}" "${BOLD}" "${latest_zap:-latest}" "${NC}" "${DGRAY}" "${NC}"
         else
-            printf "  ${BOLD}1.${NC} 🛡️ Переустановить Zapret2 v%s     ${DGRAY}(принудительная переустановка пакета)${NC}\n" "${latest_zap:-latest}"
+            printf "  %b1.%b 🛡️ Переустановить Zapret2 v%s     %b(принудительная переустановка пакета)%b\n" \
+                "${BOLD}" "${NC}" "${latest_zap:-latest}" "${DGRAY}" "${NC}"
         fi
-        printf "  ${BOLD}2.${NC} 🔄 Обновить Zapret2-Manager        ${DGRAY}(самообновление менеджера с GitHub)${NC}\n"
-        printf "  ${BOLD}3.${NC} 🚀 Обновить всё                    ${DGRAY}(Zapret2 + Zapret2-Manager в один шаг)${NC}\n"
-        printf "  ${BOLD}4.${NC} 🔍 Повторить проверку обновлений\n"
-        printf "  ${BOLD}0.${NC} Назад в главное меню\n\n"
+        printf "  %b2.%b 🔄 Обновить Zapret2-Manager        %b(самообновление менеджера с GitHub)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b3.%b 🚀 Обновить всё                    %b(Zapret2 + Zapret2-Manager в один шаг)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b4.%b 🔍 Повторить проверку обновлений\n" "${BOLD}" "${NC}"
+        printf "  %b0.%b Назад в главное меню\n\n" "${BOLD}" "${NC}"
 
         local choice
         choice=$(tui_prompt "Выберите действие" "1")
@@ -545,7 +548,7 @@ run_updates_menu() {
                 zapret_run_update "${latest_zap}" "1" "0"
                 ;;
             2)
-                run_self_update
+                run_self_update "$@"
                 ;;
             3)
                 run_update_all

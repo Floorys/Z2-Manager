@@ -16,11 +16,11 @@
 
 ### 🧬 Ключевые возможности:
 - 🎧 **Исправление Discord Voice (Звонки и RTC)**: специальный встроенный фикс для голосовых комнат и звонков Discord. Устраняет вечное «Подключение к RTC» / «Маршрут не найден». Объединяет desync для STUN и Discord IP Discovery (UDP 82) в `/opt/zapret2/init.d/openwrt/custom.d/50-script.sh` и полностью отображается в LuCI (custom.d script #50).
-- 🧬 **Двухпроходный генератор стратегий (Two-Pass Generator)**: перенесен прямо из [Asterlike/zapret2UI](https://github.com/Asterlike/zapret2UI). Тестирует сетку из 27+ десинк-бандлов, отдельно ранжирует их для Discord и YouTube, отбирает шортлист с защитой **Gateway-friendly** и подбирает идеальное сочетание.
+- 🧬 **Двухпроходный генератор стратегий (Two-Pass Generator)**: перенесен прямо из [Asterlike/zapret2UI](https://github.com/Asterlike/zapret2UI). Тестирует сетку из 27+ десинк-бандлов (с 2 повторами), отдельно ранжирует их для Discord и YouTube, отбирает шортлист с защитой **Gateway-friendly** и подбирает идеальное сочетание.
 - ⚡ **Автоподбор из проверенного каталога (Auto-Selector)**: перебор 9 готовых комбо-стратегий (Рекомендуемый, Flowseal ALT10/11, Отечественный VK, Окно wssize, Circular адаптивный) с выбором победителя под вашего провайдера.
 - ⏱️ **Расширенный сетевой пробник (набор как в Zapret-Manager)**: проверяет до 10 ключевых доменов (YouTube Web/Video/Preview, Discord Web/Voice/CDN, RuTracker, Twitter, Instagram, VK) с живым выводом статуса за 1-2 секунды без зависаний.
-- 🛑 **Безопасное прерывание по Ctrl+C**: нажатие Ctrl+C во время генерации или автоподбора мгновенно откатывает временные настройки и возвращает вас в главное меню, не закрывая сам менеджер.
-- 🔄 **Центр обновлений Zapret2 и Z2-Manager**: менеджер умеет отслеживать новые релизы официального пакета [zapret2-openwrt от 1andrevich](https://github.com/1andrevich/zapret2-openwrt) (включая v1.0.6+), автоматически скачивать подходящий пакет под архитектуру вашего процессора (`.ipk`/`.apk`) и обновлять службу без сброса настроек, а также самообновлять Z2-Manager в один клик.
+- 🛑 **Безопасное прерывание по Ctrl+C**: нажатие Ctrl+C во время генерации или автоподбора мгновенно откатывает временные настройки и возвращает вас в главное меню, не закрывая сам менеджер и не оставляя мусора в `/tmp`.
+- 🔄 **Центр обновлений Zapret2 и Z2-Manager**: менеджер умеет отслеживать новые релизы официального пакета [zapret2-openwrt от 1andrevich](https://github.com/1andrevich/zapret2-openwrt), автоматически скачивать подходящий пакет под архитектуру вашего процессора (`.ipk`/`.apk`) и обновлять службу без сброса настроек, а также самообновлять Z2-Manager в один клик.
 - 🔐 **Расширенное меню DNS и DoH**: популярные DNS-over-HTTPS пресеты из коробки — **Google DNS**, **Quad9 DNS**, **Xbox / Comss DNS** (для консолей), **DNS.ru / Yandex DNS**, **Cloudflare**, **AdGuard**.
 - 🔍 **Умный поиск установленного zapret2**: если zapret2 уже установлен вручную через opkg/apk или LuCI, скрипт мгновенно находит его и определяет точную версию (например, `1.0.5.2` или `1.0.6`).
 - 📁 **Управление хостлистами и исключениями**: готовые актуальные списки для YouTube, Discord и исключений чувствительных сервисов (Госуслуги, банки, российские CDN).
@@ -30,16 +30,25 @@
 
 ## 🚀 Быстрая установка на роутер
 
-Подключитесь к роутеру по SSH и выполните одну команду:
+Подключитесь к роутеру по SSH и выполните команду через `wget`:
 
 ```sh
-sh <(curl -fsSL https://raw.githubusercontent.com/Floorys/Z2-Manager/main/install.sh)
+wget -qO- https://raw.githubusercontent.com/Floorys/Z2-Manager/main/install.sh | sh
 ```
 
-Или через `wget`:
+Либо через `curl`:
+
 ```sh
-sh <(wget -qO- https://raw.githubusercontent.com/Floorys/Z2-Manager/main/install.sh)
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/Floorys/Z2-Manager/main/install.sh)"
 ```
+
+> [!NOTE]
+> **Требования к чистому OpenWrt:**
+> На чистой системе OpenWrt для работы `wget` с протоколом HTTPS требуются системные сертификаты и SSL-библиотека (`ca-bundle` и `libustream-mbedtls` или другой `ustream-ssl`). Утилита `curl` также устанавливается отдельно:
+> ```sh
+> opkg update && opkg install ca-bundle libustream-mbedtls curl
+> ```
+> *(Для OpenWrt с менеджером пакетов `apk`: `apk add curl ca-certificates`)*
 
 Инсталлятор автоматически настроит права, создаст команды `/usr/bin/z2m` и `/usr/bin/zsm`, и при необходимости скопирует фейковые блобы и списки доменов.
 
@@ -93,15 +102,16 @@ z2m
 - `z2m -g` или `z2m --generate` — запуск двухпроходного генератора связок Asterlike.
 - `z2m -yt` или `z2m --youtube` — тестирование стратегий только для YouTube.
 - `z2m -dc` или `z2m --discord` — тестирование стратегий только для Discord.
-- `z2m -dv` или `z2m --discord-voice` — установка исправления голосового чата Discord Voice (custom.d #50).
+- `z2m -dv` или `z2m --discord-voice` (также `--voice`) — установка исправления голосового чата Discord Voice (custom.d #50).
 - `z2m -p` или `z2m --ports` — настройка перехватываемых портов TCP / UDP.
-- `z2m -d` или `z2m --diagnostics` — вывод отчета диагностики доступности.
+- `z2m -d` или `z2m --diagnostics` — вывод отчета диагностики доступности (без побочных эффектов).
 - `z2m -u` или `z2m --update` — интерактивный центр обновлений Zapret2 и Z2-Manager.
 - `z2m -uz` или `z2m --update-zapret` — автоматическое обновление пакета Zapret2 до актуальной версии с GitHub (1andrevich/zapret2-openwrt).
-- `z2m -cu` или `z2m --check-update` — быстрая проверка наличия обновлений для Zapret2 и Z2-Manager.
+- `z2m -cu` или `z2m -c` или `z2m --check-update` — быстрая проверка наличия обновлений (без побочных эффектов).
 - `z2m -ua` или `z2m --update-all` — комплексное обновление Zapret2 и Z2-Manager в один шаг.
-- `z2m -r` или `z2m --restart` — перезапуск службы zapret2 с перечитыванием UCI.
-- `z2m -s` или `z2m --status` — проверка статуса службы.
+- `z2m -r` или `z2m --restart` — перезапуск службы zapret2 с перечитыванием конфигурации.
+- `z2m -s` или `z2m --status` — вывод текущего статуса службы (`running` / `stopped`).
+- `z2m -h` или `z2m --help` — вывод справки по командам.
 
 ---
 
@@ -112,27 +122,37 @@ z2m
 ```mermaid
 flowchart TD
     Start["Запуск Генератора"] --> Backup["Бэкап текущего конфига UCI"]
-    Backup --> Pass1["Pass 1: Раздельное тестирование 27+ бандлов"]
-    Pass1 --> ScoreD["Оценка по Discord<br>(Web + Gateway)"]
-    Pass1 --> ScoreY["Оценка по YouTube<br>(Web + Googlevideo)"]
+    Backup --> Pass1["Pass 1: Раздельное тестирование 27+ бандлов (2 повтора)"]
+    Pass1 --> ScoreD["Оценка по Discord<br>(Web + Gateway + CDN)"]
+    Pass1 --> ScoreY["Оценка по YouTube<br>(Web + Googlevideo + Превью)"]
     
     ScoreD --> FilterGW{"Фильтр Gateway-friendly?<br>(fake:ts или hostfakesplit)"}
     FilterGW -- Да --> ShortD["Шортлист Discord"]
-    FilterGW -- Нет --> Drop["Отсев (во избежание зависания войса)"]
+    FilterGW -- Нет --> Fallback{"Шортлист пуст?"}
+    Fallback -- Да --> TopD["Взять лучшие по очкам"]
+    Fallback -- Нет --> Drop["Отсев (во избежание зависания RTC)"]
     
     ScoreY --> ShortY["Шортлист YouTube"]
     
     ShortD --> Pass2["Pass 2: Совместное тестирование пар D × Y"]
+    TopD --> Pass2
     ShortY --> Pass2
     
     Pass2 --> CalcJoint["Расчет min(Score_D, Score_Y)"]
-    CalcJoint --> Best["Выбор победителя, защищающего ОБА сервиса"]
-    Best --> Apply["Сборка NFQWS2_OPT + коммит в UCI + Рестарт"]
+    CalcJoint --> Best["Выбор победителя, защищающего ОБА сервиса<br>(при равенстве: меньше параметров)"]
+    Best --> CheckThresh{"Score > 0?"}
+    CheckThresh -- Да --> Apply["Сборка NFQWS2_OPT + коммит в UCI + Рестарт"]
+    CheckThresh -- Нет --> Restore["Восстановление бэкапа UCI + Сообщение"]
 ```
 
-1. **Pass 1**: каждый бандл проверяется изолированно с живым выводом прогресса (`⏳ Тест...`).
-2. **Фильтр Gateway-friendly**: Discord использует особый размер ClientHello для соединения с голосовыми шлюзами (`gateway.discord.gg`). Непраймированные стратегии с большими смещениями `seqovl` пускают на сайт логина, но намертво вешают голосовой шлюз. Генератор допускает в шортлист только адаптивные бандлы (`hostfakesplit` или праймированные `fake:tcp_ts`).
-3. **Pass 2**: пары топ-кандидатов собираются в единое правило через `combo_builder.sh` и тестируются вместе. Выбирается связка, максимизирующая результат слабейшего из сервисов.
+1. **Pass 1**: каждый бандл проверяется изолированно с живым выводом прогресса (`⏳ Тест...`) в два повтора для отсечения случайных успехов.
+2. **Фильтр Gateway-friendly**: Discord использует особый размер ClientHello для соединения с голосовыми шлюзами (`gateway.discord.gg`). Непраймированные стратегии с большими смещениями `seqovl` пускают на сайт логина, но намертво вешают голосовой шлюз. Генератор допускает в шортлист только адаптивные бандлы (`hostfakesplit` или праймированные `fake:tcp_ts`). Если подходящих нет, скрипт выводит предупреждение и берет лучшие по score.
+3. **Pass 2**: пары топ-кандидатов собираются в единое правило через `combo_builder.sh` и тестируются вместе. Выбирается связка, максимизирующая `min(score_D, score_Y)`. При равенстве очков предпочтение отдается более простой стратегии с меньшим количеством параметров.
+
+> [!TIP]
+> **Проверка исходящего трафика роутера:**
+> По умолчанию правила фаервола `zapret2-openwrt` привязаны к цепочке `FORWARD` (клиентский трафик). Если локальный трафик самого роутера не направлен в `NFQUEUE`, проверки `curl` с роутера могут показывать расхождения. Вы можете задать интерфейс локальной сети: `export CURL_INTERFACE=br-lan` перед запуском `z2m`.
+> Тесты `curl` проверяют веб-доступность (TCP/TLS). Для работы голоса в звонках (UDP/STUN) используйте встроенный фикс (пункт меню 4).
 
 ---
 
@@ -154,11 +174,11 @@ flowchart TD
 
 ## 🔐 Пресеты DNS-over-HTTPS (DoH)
 
-В меню **Настройка DNS и DoH** (пункт 4) доступны предустановленные конфигурации:
+В меню **Настройка DNS и DoH** (пункт 6) доступны предустановленные конфигурации:
 1. **Google DNS** (`https://dns.google/dns-query`) — глобальный стабильный DNS.
 2. **Quad9 DNS** (`https://dns.quad9.net/dns-query`) — DNS без цензуры со встроенной защитой от малвари.
 3. **Xbox DNS (Comss.one)** (`https://dns.comss.one/dns-query`) — решение для снятия сетевых ограничений и ошибок входа на Xbox и PlayStation.
-4. **DNS.ru / Yandex DNS** (`https://common.dot.dns.yandex.net/dns-query`) — минимальный пинг для пользователей РФ.
+4. **DNS.ru / Yandex DNS** (`https://common.dot.dns.yandex.net/dns-query`) — быстрый резолвер для пользователей РФ.
 5. **Cloudflare DNS** (`https://cloudflare-dns.com/dns-query`) — быстрый DNS 1.1.1.1.
 6. **AdGuard DNS** (`https://dns.adguard.com/dns-query`) — блокировка рекламных трекеров на уровне роутера.
 7. **Пользовательский DoH URL** — возможность указать любой собственный адрес резолвера.
@@ -167,8 +187,8 @@ flowchart TD
 
 ## 🛠️ Совместимость и требования
 
-- **Роутер**: OpenWrt 23.05, 24.10, 25.12+ (firewall4 / nftables).
-- **Пакеты**: установленный [zapret2-openwrt](https://github.com/1andrevich/zapret2-openwrt) (`zapret2` + `luci-app-zapret2`), утилита `curl`.
+- **Роутер**: OpenWrt 23.05, 24.10, 25.12+ (firewall4 / nftables / busybox ash).
+- **Пакеты**: установленный [zapret2-openwrt](https://github.com/1andrevich/zapret2-openwrt) (`zapret2` + `luci-app-zapret2`), сетевые утилиты `curl` или `wget`.
 - **ПК / Клиенты сети**: для корректной работы стратегий с временными метками (`tcp_ts`) на устройствах Windows рекомендуется включить TCP timestamps:
   ```cmd
   netsh int tcp set global timestamps=enabled
@@ -176,12 +196,13 @@ flowchart TD
 
 ---
 
-## 📄 Лицензия
+## 📄 Лицензия и атрибуция
 
-Проект распространяется под лицензией MIT. Подробнее см. в файле [LICENSE](LICENSE).  
+Проект распространяется под лицензией MIT. Подробнее см. в файле [LICENSE](LICENSE) и [NOTICE](NOTICE).
+
 Благодарности авторам:
-- **Asterlike** за концепцию и реализацию генератора в [zapret2UI](https://github.com/Asterlike/zapret2UI).
+- **Asterlike** за концепцию и реализацию алгоритмов двухпроходного генератора в [Asterlike/zapret2UI](https://github.com/Asterlike/zapret2UI) (лицензия MIT).
 - **1andrevich** за пакет [zapret2-openwrt](https://github.com/1andrevich/zapret2-openwrt).
 - **bol-van** за оригинальный [zapret](https://github.com/bol-van/zapret).
-- **Flowseal** за сообщество и актуальные наработки по обходу DPI.
-- **StressOzz** за концепцию модульного автоскрипта для OpenWrt [Zapret-Manager](https://github.com/StressOzz/Zapret-Manager).
+- **Flowseal** за наработки десинка и структуру пресетов.
+- **StressOzz** за концепцию модульного консольного менеджера для OpenWrt [Zapret-Manager](https://github.com/StressOzz/Zapret-Manager).

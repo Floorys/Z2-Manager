@@ -4,7 +4,7 @@
 # Adapted from Asterlike/zapret2UI NetProbe.cs for high performance on OpenWrt
 # ==============================================================================
 
-[ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+[ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
 [ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
 
 probe_check_deps() {
@@ -31,24 +31,138 @@ probe_get_host_category() {
     esac
 }
 
+# Check if resolved IP looks like an ISP spoofed stub or local redirect
+probe_is_spoofed_ip() {
+    local ip="$1"
+    case "${ip}" in
+        127.*|0.0.0.0) return 0 ;;
+        10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# DNS verification before probing
+probe_dns_resolve() {
+    local host="$1"
+    local ip=""
+    if command -v nslookup >/dev/null 2>&1; then
+        ip=$(nslookup "${host}" 2>/dev/null | grep -A1 "Name:" | grep "Address" | awk '{print $2}' | head -n1)
+    fi
+    if [ -z "${ip}" ] && command -v getent >/dev/null 2>&1; then
+        ip=$(getent hosts "${host}" 2>/dev/null | awk '{print $1}')
+    fi
+    echo "${ip}"
+}
+
+# Unified curl probe helper:
+# Runs curl with strict timeouts, evaluates curl exit code vs HTTP status,
+# checks redirect headers against ISP block stubs (warning.rt.ru, eais.rkn.gov.ru).
+# Returns:
+#   0 : Success (Reachable, bypass working)
+#   1 : Failure (DPI block, timeout, RST, TLS fail, or ISP block stub)
+probe_curl_request() {
+    local host="$1"
+    local port="${2:-443}"
+    local timeout="${3:-2}"
+    local extra_args="${4:-}"
+    local max_t=$(( timeout + 1 ))
+
+    local intf_opt=""
+    if [ -n "${CURL_INTERFACE:-}" ]; then
+        intf_opt="--interface ${CURL_INTERFACE}"
+    fi
+
+    local hdr_file
+    hdr_file=$(mktemp "${Z2M_TMP}/curl_hdr.XXXXXX")
+
+    # Capture HTTP headers and status code
+    local http_code
+    if [ -n "${CURL_INTERFACE:-}" ]; then
+        if [ -n "${extra_args}" ]; then
+            http_code=$(curl -s -k -I \
+                --connect-timeout "${timeout}" \
+                -m "${max_t}" \
+                -A "${BROWSER_UA}" \
+                --interface "${CURL_INTERFACE}" \
+                "${extra_args}" \
+                -D "${hdr_file}" \
+                -o /dev/null \
+                -w "%{http_code}" \
+                "https://${host}:${port}/" 2>/dev/null)
+        else
+            http_code=$(curl -s -k -I \
+                --connect-timeout "${timeout}" \
+                -m "${max_t}" \
+                -A "${BROWSER_UA}" \
+                --interface "${CURL_INTERFACE}" \
+                -D "${hdr_file}" \
+                -o /dev/null \
+                -w "%{http_code}" \
+                "https://${host}:${port}/" 2>/dev/null)
+        fi
+    else
+        if [ -n "${extra_args}" ]; then
+            http_code=$(curl -s -k -I \
+                --connect-timeout "${timeout}" \
+                -m "${max_t}" \
+                -A "${BROWSER_UA}" \
+                "${extra_args}" \
+                -D "${hdr_file}" \
+                -o /dev/null \
+                -w "%{http_code}" \
+                "https://${host}:${port}/" 2>/dev/null)
+        else
+            http_code=$(curl -s -k -I \
+                --connect-timeout "${timeout}" \
+                -m "${max_t}" \
+                -A "${BROWSER_UA}" \
+                -D "${hdr_file}" \
+                -o /dev/null \
+                -w "%{http_code}" \
+                "https://${host}:${port}/" 2>/dev/null)
+        fi
+    fi
+    local curl_exit=$?
+
+    # Separate curl exit code from HTTP code
+    if [ "${curl_exit}" -ne 0 ]; then
+        rm -f "${hdr_file}" 2>/dev/null
+        return 1
+    fi
+
+    # Check for Russian ISP block page redirects in headers
+    if [ -s "${hdr_file}" ]; then
+        local loc
+        loc=$(grep -i "^Location:" "${hdr_file}" 2>/dev/null | tr -d '\r\n')
+        if [ -n "${loc}" ]; then
+            if echo "${loc}" | grep -q -i -E "${BLOCK_MARKERS}"; then
+                rm -f "${hdr_file}" 2>/dev/null
+                return 1
+            fi
+        fi
+    fi
+    rm -f "${hdr_file}" 2>/dev/null
+
+    case "${http_code}" in
+        2*|3*|4*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 # Fast TLS Handshake & HTTP Reachability Probe
 # Uses HEAD request (-I) with strict timeouts to eliminate router hangs
-# Returns 0 (Reachable/Bypassed) or 1 (Blocked/Timeout/RST)
 probe_fast_tls() {
     local host="$1"
     local port="${2:-443}"
     local timeout="${3:-2}"
-    local max_t=$(( timeout + 1 ))
 
     if command -v curl >/dev/null 2>&1; then
-        local code
-        code=$(curl -s -k -o /dev/null -w "%{http_code}" -I \
-            --connect-timeout "${timeout}" -m "${max_t}" \
-            -A "${BROWSER_UA}" "https://${host}:${port}/" 2>/dev/null)
-        case "${code}" in
-            2*|3*|4*) return 0 ;;
-            *) return 1 ;;
-        esac
+        probe_curl_request "${host}" "${port}" "${timeout}" ""
+        return $?
     elif command -v wget >/dev/null 2>&1; then
         wget -q --spider --timeout="${timeout}" "https://${host}:${port}/" >/dev/null 2>&1 && return 0
     fi
@@ -60,17 +174,10 @@ probe_tls12() {
     local host="$1"
     local port="${2:-443}"
     local timeout="${3:-2}"
-    local max_t=$(( timeout + 1 ))
 
     if command -v curl >/dev/null 2>&1; then
-        local code
-        code=$(curl -s -k -o /dev/null -w "%{http_code}" -I --tlsv1.2 \
-            --connect-timeout "${timeout}" -m "${max_t}" \
-            -A "${BROWSER_UA}" "https://${host}:${port}/" 2>/dev/null)
-        case "${code}" in
-            2*|3*|4*) return 0 ;;
-            *) return 1 ;;
-        esac
+        probe_curl_request "${host}" "${port}" "${timeout}" "--tlsv1.2"
+        return $?
     elif command -v openssl >/dev/null 2>&1; then
         echo -n | openssl s_client -servername "${host}" -connect "${host}:${port}" \
             -tls1_2 2>&1 | grep -q "CONNECTED" && return 0
@@ -83,17 +190,10 @@ probe_tls13() {
     local host="$1"
     local port="${2:-443}"
     local timeout="${3:-2}"
-    local max_t=$(( timeout + 1 ))
 
     if command -v curl >/dev/null 2>&1; then
-        local code
-        code=$(curl -s -k -o /dev/null -w "%{http_code}" -I --tlsv1.3 \
-            --connect-timeout "${timeout}" -m "${max_t}" \
-            -A "${BROWSER_UA}" "https://${host}:${port}/" 2>/dev/null)
-        case "${code}" in
-            2*|3*|4*) return 0 ;;
-            *) return 1 ;;
-        esac
+        probe_curl_request "${host}" "${port}" "${timeout}" "--tlsv1.3"
+        return $?
     elif command -v openssl >/dev/null 2>&1; then
         echo -n | openssl s_client -servername "${host}" -connect "${host}:${port}" \
             -tls1_3 2>&1 | grep -q "CONNECTED" && return 0
@@ -105,7 +205,7 @@ probe_tls13() {
 probe_http_reach() {
     local host="$1"
     local timeout="${2:-2}"
-    probe_fast_tls "${host}" "443" "${timeout}"
+    probe_fast_tls "${host}" 443 "${timeout}"
 }
 
 # 3-signal probe of a single host for scoring
@@ -113,12 +213,8 @@ probe_host() {
     local host="$1"
     local s_tls12=0
     local s_tls13=0
-    local s_http=0
 
-    probe_fast_tls "${host}" 443 2 && s_http=1
-    if [ "${s_http}" -eq 1 ]; then
-        s_tls12=1
-        s_tls13=1
+    if probe_fast_tls "${host}" 443 2; then
         echo "1 1 1 5"
     else
         probe_tls13 "${host}" 443 2 && s_tls13=1
@@ -165,10 +261,24 @@ probe_dpi_verdict() {
         return 0
     fi
 
-    local err_file="${Z2M_TMP}/curl_dpi_err_$$.tmp"
-    rm -f "${err_file}" 2>/dev/null
+    # Check DNS spoofing first
+    local ip
+    ip=$(probe_dns_resolve "${host}")
+    if [ -n "${ip}" ] && probe_is_spoofed_ip "${ip}"; then
+        echo "DNSError"
+        return 0
+    fi
 
-    curl -s -k -o /dev/null -I --connect-timeout 2 -m 4 "https://${host}:${port}/" 2>"${err_file}"
+    local err_file
+    err_file=$(mktemp "${Z2M_TMP}/curl_dpi_err.XXXXXX")
+
+    local intf_opt=""
+    if [ -n "${CURL_INTERFACE:-}" ]; then
+        intf_opt="--interface ${CURL_INTERFACE}"
+    fi
+
+    # shellcheck disable=SC2086
+    curl -s -k -o /dev/null -I --connect-timeout 2 -m 4 ${intf_opt} "https://${host}:${port}/" 2>"${err_file}"
     local code=$?
 
     if [ ${code} -eq 0 ]; then

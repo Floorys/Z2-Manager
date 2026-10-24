@@ -1,0 +1,27 @@
+Zapret2-Manager
+Copyright (c) 2026 Floorys
+
+This project includes algorithms, strategies, and components from the following open source projects:
+
+1. Asterlike/zapret2UI
+   Repository: https://github.com/Asterlike/zapret2UI
+   License: MIT License
+   Copyright (c) 2026 Zapret UI contributors
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
+   The above copyright notice and this permission notice shall be included in all
+   copies or substantial portions of the Software.
+
+2. zapret2-openwrt (by 1andrevich)
+   Repository: https://github.com/1andrevich/zapret2-openwrt
+   License: MIT License
+   Copyright (c) 2025-2026 1andrevich
+
+3. zapret / zapret2 (by bol-van)
+   Repository: https://github.com/bol-van/zapret2
+   License: MIT License
+   Copyright (c) 2018-2026 bol-van
