@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC3043
 # ==============================================================================
 # Zapret2-Manager: Zapret2 Service & UCI Integration Layer
 # Interacts natively with 1andrevich/zapret2-openwrt and custom installations
@@ -164,6 +165,60 @@ zapret_get_opt() {
     echo "${val}" | tr -d '"'
 }
 
+# Write NFQWS2_OPT safely to /opt/zapret2/config
+# - Handles multiline values by discarding continuation lines up to the closing quote
+# - Passes replacement value via ENVIRON to prevent awk -v backslash unescaping
+zapret_write_opt_to_config() {
+    local opt_val="$1"
+    [ -f "${ZAPRET2_CONFIG}" ] || return 0
+
+    opt_val=$(echo "${opt_val}" | tr -d '"')
+    local tmp_cfg
+    tmp_cfg=$(mktemp "${Z2M_TMP}/cfg.XXXXXX") || return 1
+
+    Z2M_NEW_OPT="${opt_val}" awk '
+        BEGIN {
+            found = 0
+            in_q = 0
+            q_char = ""
+        }
+        {
+            if (in_q) {
+                if (index($0, q_char) > 0) {
+                    in_q = 0
+                }
+                next
+            }
+            if ($0 ~ /^[[:space:]]*(export[[:space:]]+)?NFQWS2_OPT=/) {
+                found = 1
+                prefix = ""
+                if ($0 ~ /^[[:space:]]*export/) {
+                    prefix = "export "
+                }
+                print prefix "NFQWS2_OPT=\"" ENVIRON["Z2M_NEW_OPT"] "\""
+                rest = substr($0, index($0, "=") + 1)
+                sub(/^[[:space:]]+/, "", rest)
+                first_char = substr(rest, 1, 1)
+                if (first_char == "\"" || first_char == "\x27") {
+                    q_char = first_char
+                    val = substr(rest, 2)
+                    if (index(val, q_char) == 0) {
+                        in_q = 1
+                    }
+                }
+                next
+            }
+            print
+        }
+        END {
+            if (!found) {
+                print "NFQWS2_OPT=\"" ENVIRON["Z2M_NEW_OPT"] "\""
+            }
+        }
+    ' "${ZAPRET2_CONFIG}" > "${tmp_cfg}" && cat "${tmp_cfg}" > "${ZAPRET2_CONFIG}"
+    rm -f "${tmp_cfg}" 2>/dev/null
+}
+
 # Create a full UCI backup or config file backup
 zapret_backup_config() {
     local backup_file
@@ -188,6 +243,10 @@ zapret_restore_config() {
             if [ -f "${ZAPRET2_SYNC}" ]; then
                 "${ZAPRET2_SYNC}" >/dev/null 2>&1
             fi
+            # Write restored NFQWS2_OPT back to /opt/zapret2/config
+            local restored_opt
+            restored_opt="$(zapret_get_opt)"
+            zapret_write_opt_to_config "${restored_opt}"
             zapret_restart
         elif [ -f "${ZAPRET2_CONFIG}" ] && grep -q "^NFQWS2_OPT=" "${backup_file}" 2>/dev/null; then
             cat "${backup_file}" > "${ZAPRET2_CONFIG}"
@@ -206,14 +265,9 @@ zapret_repair_config() {
     if [ -f "${ZAPRET2_CONFIG}" ]; then
         if ! sh -n "${ZAPRET2_CONFIG}" 2>/dev/null; then
             local raw_opt
-            raw_opt=$(grep "^NFQWS2_OPT=" "${ZAPRET2_CONFIG}" 2>/dev/null | sed 's/^NFQWS2_OPT=//' | tr -d '"')
-            local tmp_repair
-            tmp_repair=$(mktemp "${Z2M_TMP}/repair.XXXXXX")
-            awk -v opt="NFQWS2_OPT=\"${raw_opt}\"" '
-                /^NFQWS2_OPT=/ { print opt; next }
-                { print }
-            ' "${ZAPRET2_CONFIG}" > "${tmp_repair}" && cat "${tmp_repair}" > "${ZAPRET2_CONFIG}"
-            rm -f "${tmp_repair}" 2>/dev/null
+            raw_opt=$(zapret_get_opt)
+            [ -z "${raw_opt}" ] && raw_opt=$(grep "^NFQWS2_OPT=" "${ZAPRET2_CONFIG}" 2>/dev/null | sed 's/^NFQWS2_OPT=//' | tr -d '"')
+            zapret_write_opt_to_config "${raw_opt}"
         fi
     fi
 }
@@ -265,10 +319,13 @@ zapret_set_ports() {
     if [ -f "${ZAPRET2_CONFIG}" ]; then
         local tmp_ports
         tmp_ports=$(mktemp "${Z2M_TMP}/ports.XXXXXX")
-        awk -v tcp="NFQWS2_PORTS_TCP=\"${tcp_ports}\"" \
-            -v udp="NFQWS2_PORTS_UDP=\"${udp_ports}\"" \
-            -v old_tcp="NFQWS_PORTS_TCP=\"${tcp_ports}\"" \
-            -v old_udp="NFQWS_PORTS_UDP=\"${udp_ports}\"" '
+        Z2M_TCP="${tcp_ports}" Z2M_UDP="${udp_ports}" awk '
+            BEGIN {
+                tcp = "NFQWS2_PORTS_TCP=\"" ENVIRON["Z2M_TCP"] "\""
+                udp = "NFQWS2_PORTS_UDP=\"" ENVIRON["Z2M_UDP"] "\""
+                old_tcp = "NFQWS_PORTS_TCP=\"" ENVIRON["Z2M_TCP"] "\""
+                old_udp = "NFQWS_PORTS_UDP=\"" ENVIRON["Z2M_UDP"] "\""
+            }
             /^NFQWS2_PORTS_TCP=/ { print tcp; next }
             /^NFQWS2_PORTS_UDP=/ { print udp; next }
             /^NFQWS_PORTS_TCP=/ { print old_tcp; next }
@@ -312,10 +369,13 @@ zapret_ensure_full_ports() {
         if [ -f "${ZAPRET2_CONFIG}" ]; then
             local tmp_ports
             tmp_ports=$(mktemp "${Z2M_TMP}/ports.XXXXXX")
-            awk -v tcp="NFQWS2_PORTS_TCP=\"${cur_tcp}\"" \
-                -v udp="NFQWS2_PORTS_UDP=\"${cur_udp}\"" \
-                -v old_tcp="NFQWS_PORTS_TCP=\"${cur_tcp}\"" \
-                -v old_udp="NFQWS_PORTS_UDP=\"${cur_udp}\"" '
+            Z2M_TCP="${cur_tcp}" Z2M_UDP="${cur_udp}" awk '
+                BEGIN {
+                    tcp = "NFQWS2_PORTS_TCP=\"" ENVIRON["Z2M_TCP"] "\""
+                    udp = "NFQWS2_PORTS_UDP=\"" ENVIRON["Z2M_UDP"] "\""
+                    old_tcp = "NFQWS_PORTS_TCP=\"" ENVIRON["Z2M_TCP"] "\""
+                    old_udp = "NFQWS_PORTS_UDP=\"" ENVIRON["Z2M_UDP"] "\""
+                }
                 /^NFQWS2_PORTS_TCP=/ { print tcp; next }
                 /^NFQWS2_PORTS_UDP=/ { print udp; next }
                 /^NFQWS_PORTS_TCP=/ { print old_tcp; next }
@@ -343,16 +403,8 @@ zapret_set_opt() {
         uci commit zapret2 2>/dev/null
     fi
 
-    # Also update /opt/zapret2/config safely using awk to avoid sed delimiter/& bugs
-    if [ -f "${ZAPRET2_CONFIG}" ]; then
-        local tmp_cfg
-        tmp_cfg=$(mktemp "${Z2M_TMP}/cfg.XXXXXX")
-        awk -v opt="NFQWS2_OPT=\"${new_opt}\"" '
-            /^NFQWS2_OPT=/ { print opt; next }
-            { print }
-        ' "${ZAPRET2_CONFIG}" > "${tmp_cfg}" && cat "${tmp_cfg}" > "${ZAPRET2_CONFIG}"
-        rm -f "${tmp_cfg}" 2>/dev/null
-    fi
+    # Also update /opt/zapret2/config safely using zapret_write_opt_to_config
+    zapret_write_opt_to_config "${new_opt}"
 
     # Restart service and wait for nfqws2 to stabilize (2 seconds)
     zapret_restart

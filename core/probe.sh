@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC3043
 # ==============================================================================
 # Zapret2-Manager: Fast Network Connectivity & DPI Probe Engine
 # Adapted from Asterlike/zapret2UI NetProbe.cs for high performance on OpenWrt
@@ -66,11 +67,6 @@ probe_curl_request() {
     local timeout="${3:-2}"
     local extra_args="${4:-}"
     local max_t=$(( timeout + 1 ))
-
-    local intf_opt=""
-    if [ -n "${CURL_INTERFACE:-}" ]; then
-        intf_opt="--interface ${CURL_INTERFACE}"
-    fi
 
     local hdr_file
     hdr_file=$(mktemp "${Z2M_TMP}/curl_hdr.XXXXXX")
@@ -179,7 +175,7 @@ probe_tls12() {
         probe_curl_request "${host}" "${port}" "${timeout}" "--tlsv1.2"
         return $?
     elif command -v openssl >/dev/null 2>&1; then
-        echo -n | openssl s_client -servername "${host}" -connect "${host}:${port}" \
+        printf "" | openssl s_client -servername "${host}" -connect "${host}:${port}" \
             -tls1_2 2>&1 | grep -q "CONNECTED" && return 0
     fi
     return 1
@@ -195,7 +191,7 @@ probe_tls13() {
         probe_curl_request "${host}" "${port}" "${timeout}" "--tlsv1.3"
         return $?
     elif command -v openssl >/dev/null 2>&1; then
-        echo -n | openssl s_client -servername "${host}" -connect "${host}:${port}" \
+        printf "" | openssl s_client -servername "${host}" -connect "${host}:${port}" \
             -tls1_3 2>&1 | grep -q "CONNECTED" && return 0
     fi
     return 1

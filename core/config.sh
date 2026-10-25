@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC2034
+# shellcheck disable=SC2034,SC3043
 # ==============================================================================
 # Zapret2-Manager: Global Configuration & Environment Constants
 # ==============================================================================
@@ -70,10 +70,12 @@ fi
 export Z2M_DIR
 
 Z2M_TMP="/tmp/zapret2-manager"
+mkdir -p "${Z2M_TMP}" 2>/dev/null
 Z2M_BACKUP_DIR="${Z2M_DIR}/backups"
+mkdir -p "${Z2M_BACKUP_DIR}" 2>/dev/null
 Z2M_LOG_FILE="${Z2M_TMP}/z2m.log"
 
-# Network test interface (optional: e.g. "br-lan" or LAN IP to route through FORWARD rules)
+# Network test interface (optional: e.g. "br-lan" or LAN IP)
 CURL_INTERFACE="${CURL_INTERFACE:-}"
 
 # Probing target endpoints (Expanded suite inspired by StressOzz)
@@ -92,7 +94,3 @@ BROWSER_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 # Russian ISP Block Page Signatures (Russian TSPU/DPI stub-page fingerprints)
 BLOCK_MARKERS="доступ ограничен|доступ заблокирован|ресурс заблокирован|единый реестр|запрещен на территории|warning.rt.ru|eais.rkn.gov.ru|blocked by|block.mts.ru|blackhole"
-
-# Setup temporary directory
-mkdir -p "${Z2M_TMP}" 2>/dev/null
-mkdir -p "${Z2M_BACKUP_DIR}" 2>/dev/null

@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC3043
 # ==============================================================================
 # Zapret2-Manager: Strategy Auto-Selector Module
 # Tests curated catalog presets against goal endpoints
@@ -19,13 +20,9 @@ run_strategy_autoselect() {
     tui_info "оценивает их работу на YouTube и Discord (с повторами) и выбирает лучшую."
     echo ""
 
-    # Task 9a: Router local traffic NFQUEUE notice
-    tui_warn "ВАЖНО: zapret2 фильтрует транзитный трафик клиентов (цепочка FORWARD)."
+    tui_info "Тестирование доступности выполняется напрямую с роутера (протоколы TCP/TLS)."
     if [ -n "${CURL_INTERFACE:-}" ]; then
-        tui_info "Тестирование выполняется через интерфейс: ${CURL_INTERFACE}"
-    else
-        tui_info "Если исходящий трафик роутера не направлен в nfqws2 фаерволом, результаты"
-        tui_info "могут отличаться от клиентских. Для привязки задайте CURL_INTERFACE=br-lan."
+        tui_info "Используется сетевой интерфейс: ${CURL_INTERFACE}"
     fi
     echo ""
 
@@ -35,11 +32,11 @@ run_strategy_autoselect() {
         return 1
     fi
 
-    # Task 2: Ensure required blobs and lists are in place
+    # Ensure required blobs and lists are in place
     zapret_sync_fake_blobs
     zapret_sync_hostlists
 
-    # Task 9g: Backup current configuration BEFORE any modification
+    # Backup current configuration BEFORE any modification
     local bak_file
     bak_file=$(zapret_backup_config)
     local interrupted=0
@@ -49,10 +46,10 @@ run_strategy_autoselect() {
         tui_warn "Прерывание! Восстанавливаем исходную конфигурацию..."
         zapret_restore_config "${bak_file}"
         rm -f "${bak_file}" 2>/dev/null
-        trap - INT TERM
+        trap - INT TERM HUP
         interrupted=1
     }
-    trap cleanup_autoselect INT TERM
+    trap cleanup_autoselect INT TERM HUP
 
     tui_print_result_table_header
 
@@ -95,7 +92,7 @@ run_strategy_autoselect() {
             continue
         fi
 
-        # Task 9d: Probe goal hosts with 2 repeats for stability
+        # Probe goal hosts with 2 repeats for stability
         local p_res1 p_res2
         p_res1=$(probe_host_list "${ALL_PROBE_HOSTS}")
         sleep 1
@@ -144,14 +141,14 @@ run_strategy_autoselect() {
         return 0
     fi
 
-    # Task 9j: If no strategy passed threshold (> 0), restore backup and inform user
+    # If no strategy passed threshold (> 0), restore backup and inform user
     if [ "${best_score}" -le 0 ]; then
         echo ""
         tui_error "Ни одна стратегия из каталога не прошла проверки доступности!"
         tui_warn "Восстанавливаем исходную конфигурацию..."
         zapret_restore_config "${bak_file}"
         rm -f "${bak_file}" 2>/dev/null
-        trap - INT TERM
+        trap - INT TERM HUP
         tui_info "Рекомендация: проверьте DNS (DoH в меню 6) или запустите полный генератор (z2m -g)."
         tui_pause
         return 1
@@ -167,7 +164,7 @@ run_strategy_autoselect() {
 
     # Remove temporary backup and clear trap
     rm -f "${bak_file}" 2>/dev/null
-    trap - INT TERM
+    trap - INT TERM HUP
 
     echo ""
     tui_header "🏆 Лучшая стратегия определена и применена!"
@@ -202,10 +199,10 @@ run_test_youtube_only() {
         tui_warn "Прерывание! Восстанавливаем исходную конфигурацию..."
         zapret_restore_config "${bak_file}"
         rm -f "${bak_file}" 2>/dev/null
-        trap - INT TERM
+        trap - INT TERM HUP
         interrupted=1
     }
-    trap cleanup_yt INT TERM
+    trap cleanup_yt INT TERM HUP
 
     tui_print_result_table_header
 
@@ -285,7 +282,7 @@ run_test_youtube_only() {
         tui_error "Ни одна стратегия для YouTube не сработала!"
         zapret_restore_config "${bak_file}"
         rm -f "${bak_file}" 2>/dev/null
-        trap - INT TERM
+        trap - INT TERM HUP
         tui_pause
         return 1
     fi
@@ -295,7 +292,7 @@ run_test_youtube_only() {
     win_opt=$(catalog_get_opt "${best_idx}")
     zapret_set_opt "${win_opt}"
     rm -f "${bak_file}" 2>/dev/null
-    trap - INT TERM
+    trap - INT TERM HUP
 
     echo ""
     tui_success "Выбрана лучшая стратегия для YouTube: ${win_name}"
@@ -323,10 +320,10 @@ run_test_discord_only() {
         tui_warn "Прерывание! Восстанавливаем исходную конфигурацию..."
         zapret_restore_config "${bak_file}"
         rm -f "${bak_file}" 2>/dev/null
-        trap - INT TERM
+        trap - INT TERM HUP
         interrupted=1
     }
-    trap cleanup_dc INT TERM
+    trap cleanup_dc INT TERM HUP
 
     tui_print_result_table_header
 
@@ -406,7 +403,7 @@ run_test_discord_only() {
         tui_error "Ни одна стратегия для Discord не сработала!"
         zapret_restore_config "${bak_file}"
         rm -f "${bak_file}" 2>/dev/null
-        trap - INT TERM
+        trap - INT TERM HUP
         tui_pause
         return 1
     fi
@@ -416,7 +413,7 @@ run_test_discord_only() {
     win_opt=$(catalog_get_opt "${best_idx}")
     zapret_set_opt "${win_opt}"
     rm -f "${bak_file}" 2>/dev/null
-    trap - INT TERM
+    trap - INT TERM HUP
 
     echo ""
     tui_success "Выбрана лучшая стратегия для Discord: ${win_name}"
