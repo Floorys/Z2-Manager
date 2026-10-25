@@ -1,10 +1,11 @@
 #!/bin/sh
+# shellcheck disable=SC3043
 # ==============================================================================
 # Zapret2-Manager: Zapret2 Service & UCI Integration Layer
 # Interacts natively with 1andrevich/zapret2-openwrt and custom installations
 # ==============================================================================
 
-[ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+[ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
 [ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
 
 zapret_is_installed() {
@@ -65,7 +66,7 @@ zapret_get_installed_version() {
         fi
     fi
     if [ -z "${ver}" ] && [ -f "${ZAPRET2_DIR}/version" ]; then
-        ver=$(cat "${ZAPRET2_DIR}/version" 2>/dev/null | tr -d '\r\n ')
+        ver=$(tr -d '\r\n ' < "${ZAPRET2_DIR}/version" 2>/dev/null)
     fi
     echo "${ver}" | sed 's/^v//'
 }
@@ -75,24 +76,52 @@ zapret_start() {
         chmod +x "${ZAPRET2_SYNC}" 2>/dev/null
         "${ZAPRET2_SYNC}" >/dev/null 2>&1
     fi
-    if [ -f "${ZAPRET2_INIT}" ]; then
-        chmod +x "${ZAPRET2_INIT}" 2>/dev/null
-        "${ZAPRET2_INIT}" start >/dev/null 2>&1
-        sleep 1
-    elif [ -f "/etc/init.d/zapret" ]; then
-        /etc/init.d/zapret start >/dev/null 2>&1
-        sleep 1
+
+    local init_script=""
+    if [ -x "${ZAPRET2_INIT}" ]; then
+        init_script="${ZAPRET2_INIT}"
+    elif [ -x "/etc/init.d/zapret" ]; then
+        init_script="/etc/init.d/zapret"
     fi
+
+    if [ -n "${init_script}" ]; then
+        "${init_script}" start >/dev/null 2>&1
+    fi
+
+    # Poll for running status up to 5 seconds
+    local i=0
+    while [ "$i" -lt 5 ]; do
+        if zapret_is_running; then
+            return 0
+        fi
+        sleep 1
+        i=$(( i + 1 ))
+    done
+    return 1
 }
 
 zapret_stop() {
-    if [ -f "${ZAPRET2_INIT}" ]; then
-        "${ZAPRET2_INIT}" stop >/dev/null 2>&1
-        sleep 1
-    elif [ -f "/etc/init.d/zapret" ]; then
-        /etc/init.d/zapret stop >/dev/null 2>&1
-        sleep 1
+    local init_script=""
+    if [ -x "${ZAPRET2_INIT}" ]; then
+        init_script="${ZAPRET2_INIT}"
+    elif [ -x "/etc/init.d/zapret" ]; then
+        init_script="/etc/init.d/zapret"
     fi
+
+    if [ -n "${init_script}" ]; then
+        "${init_script}" stop >/dev/null 2>&1
+    fi
+
+    # Poll for stopped status up to 5 seconds (success = process is gone)
+    local i=0
+    while [ "$i" -lt 5 ]; do
+        if ! zapret_is_running; then
+            return 0
+        fi
+        sleep 1
+        i=$(( i + 1 ))
+    done
+    return 1
 }
 
 zapret_restart() {
@@ -101,15 +130,28 @@ zapret_restart() {
         chmod +x "${ZAPRET2_SYNC}" 2>/dev/null
         "${ZAPRET2_SYNC}" >/dev/null 2>&1
     fi
-    if [ -f "${ZAPRET2_INIT}" ]; then
-        chmod +x "${ZAPRET2_INIT}" 2>/dev/null
-        "${ZAPRET2_INIT}" restart >/dev/null 2>&1
-        sleep 1
-    elif [ -f "/etc/init.d/zapret" ]; then
-        /etc/init.d/zapret restart >/dev/null 2>&1
-        sleep 1
+
+    local init_script=""
+    if [ -x "${ZAPRET2_INIT}" ]; then
+        init_script="${ZAPRET2_INIT}"
+    elif [ -x "/etc/init.d/zapret" ]; then
+        init_script="/etc/init.d/zapret"
     fi
-    zapret_is_running
+
+    if [ -n "${init_script}" ]; then
+        "${init_script}" restart >/dev/null 2>&1
+    fi
+
+    # Poll for running status up to 5 seconds
+    local i=0
+    while [ "$i" -lt 5 ]; do
+        if zapret_is_running; then
+            return 0
+        fi
+        sleep 1
+        i=$(( i + 1 ))
+    done
+    return 1
 }
 
 zapret_get_opt() {
@@ -123,20 +165,97 @@ zapret_get_opt() {
     echo "${val}" | tr -d '"'
 }
 
+# Write NFQWS2_OPT safely to /opt/zapret2/config
+# - Handles multiline values by discarding continuation lines up to the closing quote
+# - Passes replacement value via ENVIRON to prevent awk -v backslash unescaping
+zapret_write_opt_to_config() {
+    local opt_val="$1"
+    [ -f "${ZAPRET2_CONFIG}" ] || return 0
+
+    opt_val=$(echo "${opt_val}" | tr -d '"')
+    local tmp_cfg
+    tmp_cfg=$(mktemp "${Z2M_TMP}/cfg.XXXXXX") || return 1
+
+    Z2M_NEW_OPT="${opt_val}" awk '
+        BEGIN {
+            found = 0
+            in_q = 0
+            q_char = ""
+        }
+        {
+            if (in_q) {
+                if (index($0, q_char) > 0) {
+                    in_q = 0
+                }
+                next
+            }
+            if ($0 ~ /^[[:space:]]*(export[[:space:]]+)?NFQWS2_OPT=/) {
+                found = 1
+                prefix = ""
+                if ($0 ~ /^[[:space:]]*export/) {
+                    prefix = "export "
+                }
+                print prefix "NFQWS2_OPT=\"" ENVIRON["Z2M_NEW_OPT"] "\""
+                rest = substr($0, index($0, "=") + 1)
+                sub(/^[[:space:]]+/, "", rest)
+                first_char = substr(rest, 1, 1)
+                if (first_char == "\"" || first_char == "\x27") {
+                    q_char = first_char
+                    val = substr(rest, 2)
+                    if (index(val, q_char) == 0) {
+                        in_q = 1
+                    }
+                }
+                next
+            }
+            print
+        }
+        END {
+            if (!found) {
+                print "NFQWS2_OPT=\"" ENVIRON["Z2M_NEW_OPT"] "\""
+            }
+        }
+    ' "${ZAPRET2_CONFIG}" > "${tmp_cfg}" && cat "${tmp_cfg}" > "${ZAPRET2_CONFIG}"
+    rm -f "${tmp_cfg}" 2>/dev/null
+}
+
+# Create a full UCI backup or config file backup
 zapret_backup_config() {
-    local backup_file="${Z2M_TMP}/zapret2_opt_backup_$$.txt"
-    local current_opt
-    current_opt=$(zapret_get_opt)
-    echo "${current_opt}" > "${backup_file}"
+    local backup_file
+    backup_file=$(mktemp "${Z2M_TMP}/z2m_uci_backup.XXXXXX")
+    if command -v uci >/dev/null 2>&1 && [ -f "${UCI_CONFIG}" ]; then
+        uci export zapret2 > "${backup_file}" 2>/dev/null
+    elif [ -f "${ZAPRET2_CONFIG}" ]; then
+        cp -f "${ZAPRET2_CONFIG}" "${backup_file}" 2>/dev/null
+    else
+        zapret_get_opt > "${backup_file}"
+    fi
     echo "${backup_file}"
 }
 
+# Restore full UCI configuration or config file from backup
 zapret_restore_config() {
     local backup_file="$1"
-    if [ -f "${backup_file}" ]; then
-        local saved_opt
-        saved_opt=$(cat "${backup_file}")
-        zapret_set_opt "${saved_opt}"
+    if [ -f "${backup_file}" ] && [ -s "${backup_file}" ]; then
+        if command -v uci >/dev/null 2>&1 && grep -q "package zapret2" "${backup_file}" 2>/dev/null; then
+            uci import zapret2 < "${backup_file}" 2>/dev/null
+            uci commit zapret2 2>/dev/null
+            if [ -f "${ZAPRET2_SYNC}" ]; then
+                "${ZAPRET2_SYNC}" >/dev/null 2>&1
+            fi
+            # Write restored NFQWS2_OPT back to /opt/zapret2/config
+            local restored_opt
+            restored_opt="$(zapret_get_opt)"
+            zapret_write_opt_to_config "${restored_opt}"
+            zapret_restart
+        elif [ -f "${ZAPRET2_CONFIG}" ] && grep -q "^NFQWS2_OPT=" "${backup_file}" 2>/dev/null; then
+            cat "${backup_file}" > "${ZAPRET2_CONFIG}"
+            zapret_restart
+        else
+            local saved_opt
+            saved_opt=$(cat "${backup_file}")
+            zapret_set_opt "${saved_opt}"
+        fi
         rm -f "${backup_file}" 2>/dev/null
     fi
 }
@@ -146,8 +265,9 @@ zapret_repair_config() {
     if [ -f "${ZAPRET2_CONFIG}" ]; then
         if ! sh -n "${ZAPRET2_CONFIG}" 2>/dev/null; then
             local raw_opt
-            raw_opt=$(grep "^NFQWS2_OPT=" "${ZAPRET2_CONFIG}" 2>/dev/null | sed 's/^NFQWS2_OPT=//' | tr -d '"')
-            sed -i "s|^NFQWS2_OPT=.*|NFQWS2_OPT=\"${raw_opt}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
+            raw_opt=$(zapret_get_opt)
+            [ -z "${raw_opt}" ] && raw_opt=$(grep "^NFQWS2_OPT=" "${ZAPRET2_CONFIG}" 2>/dev/null | sed 's/^NFQWS2_OPT=//' | tr -d '"')
+            zapret_write_opt_to_config "${raw_opt}"
         fi
     fi
 }
@@ -197,10 +317,22 @@ zapret_set_ports() {
     fi
 
     if [ -f "${ZAPRET2_CONFIG}" ]; then
-        sed -i "s|^NFQWS2_PORTS_TCP=.*|NFQWS2_PORTS_TCP=\"${tcp_ports}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
-        sed -i "s|^NFQWS2_PORTS_UDP=.*|NFQWS2_PORTS_UDP=\"${udp_ports}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
-        sed -i "s|^NFQWS_PORTS_TCP=.*|NFQWS_PORTS_TCP=\"${tcp_ports}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
-        sed -i "s|^NFQWS_PORTS_UDP=.*|NFQWS_PORTS_UDP=\"${udp_ports}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
+        local tmp_ports
+        tmp_ports=$(mktemp "${Z2M_TMP}/ports.XXXXXX")
+        Z2M_TCP="${tcp_ports}" Z2M_UDP="${udp_ports}" awk '
+            BEGIN {
+                tcp = "NFQWS2_PORTS_TCP=\"" ENVIRON["Z2M_TCP"] "\""
+                udp = "NFQWS2_PORTS_UDP=\"" ENVIRON["Z2M_UDP"] "\""
+                old_tcp = "NFQWS_PORTS_TCP=\"" ENVIRON["Z2M_TCP"] "\""
+                old_udp = "NFQWS_PORTS_UDP=\"" ENVIRON["Z2M_UDP"] "\""
+            }
+            /^NFQWS2_PORTS_TCP=/ { print tcp; next }
+            /^NFQWS2_PORTS_UDP=/ { print udp; next }
+            /^NFQWS_PORTS_TCP=/ { print old_tcp; next }
+            /^NFQWS_PORTS_UDP=/ { print old_udp; next }
+            { print }
+        ' "${ZAPRET2_CONFIG}" > "${tmp_ports}" && cat "${tmp_ports}" > "${ZAPRET2_CONFIG}"
+        rm -f "${tmp_ports}" 2>/dev/null
     fi
 
     zapret_restart
@@ -235,18 +367,31 @@ zapret_ensure_full_ports() {
             uci commit zapret2 2>/dev/null
         fi
         if [ -f "${ZAPRET2_CONFIG}" ]; then
-            sed -i "s|^NFQWS2_PORTS_TCP=.*|NFQWS2_PORTS_TCP=\"${cur_tcp}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
-            sed -i "s|^NFQWS2_PORTS_UDP=.*|NFQWS2_PORTS_UDP=\"${cur_udp}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
-            sed -i "s|^NFQWS_PORTS_TCP=.*|NFQWS_PORTS_TCP=\"${cur_tcp}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
-            sed -i "s|^NFQWS_PORTS_UDP=.*|NFQWS_PORTS_UDP=\"${cur_udp}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
+            local tmp_ports
+            tmp_ports=$(mktemp "${Z2M_TMP}/ports.XXXXXX")
+            Z2M_TCP="${cur_tcp}" Z2M_UDP="${cur_udp}" awk '
+                BEGIN {
+                    tcp = "NFQWS2_PORTS_TCP=\"" ENVIRON["Z2M_TCP"] "\""
+                    udp = "NFQWS2_PORTS_UDP=\"" ENVIRON["Z2M_UDP"] "\""
+                    old_tcp = "NFQWS_PORTS_TCP=\"" ENVIRON["Z2M_TCP"] "\""
+                    old_udp = "NFQWS_PORTS_UDP=\"" ENVIRON["Z2M_UDP"] "\""
+                }
+                /^NFQWS2_PORTS_TCP=/ { print tcp; next }
+                /^NFQWS2_PORTS_UDP=/ { print udp; next }
+                /^NFQWS_PORTS_TCP=/ { print old_tcp; next }
+                /^NFQWS_PORTS_UDP=/ { print old_udp; next }
+                { print }
+            ' "${ZAPRET2_CONFIG}" > "${tmp_ports}" && cat "${tmp_ports}" > "${ZAPRET2_CONFIG}"
+            rm -f "${tmp_ports}" 2>/dev/null
         fi
     fi
 }
 
 # Apply new NFQWS2_OPT to OpenWrt UCI and restart service
+# Safely writes without sed corruption (&, quotes, slashes) and pauses for stabilization
 zapret_set_opt() {
     local new_opt="$1"
-    # Strictly strip all double quotes to prevent syntax corruption in /opt/zapret2/config
+    # Strictly strip surrounding double quotes to prevent syntax corruption
     new_opt=$(echo "${new_opt}" | tr -d '"')
 
     # Automatically ensure full ports are active so Discord and Web traffic are intercepted
@@ -258,12 +403,12 @@ zapret_set_opt() {
         uci commit zapret2 2>/dev/null
     fi
 
-    # Also update /opt/zapret2/config if present
-    if [ -f "${ZAPRET2_CONFIG}" ]; then
-        sed -i "s|^NFQWS2_OPT=.*|NFQWS2_OPT=\"${new_opt}\"|" "${ZAPRET2_CONFIG}" 2>/dev/null
-    fi
+    # Also update /opt/zapret2/config safely using zapret_write_opt_to_config
+    zapret_write_opt_to_config "${new_opt}"
 
+    # Restart service and wait for nfqws2 to stabilize (2 seconds)
     zapret_restart
+    sleep 2
 }
 
 # Synchronize and install bundled fake blobs into /opt/zapret2/files/fake
@@ -274,7 +419,10 @@ zapret_sync_fake_blobs() {
     mkdir -p "${dst_dir}" 2>/dev/null
 
     if [ -d "${src_dir}" ]; then
-        cp -f "${src_dir}"/*.bin "${dst_dir}/" 2>/dev/null
+        for f in "${src_dir}"/*.bin; do
+            [ -f "${f}" ] || continue
+            cp -f "${f}" "${dst_dir}/" 2>/dev/null
+        done
         chmod 644 "${dst_dir}"/*.bin 2>/dev/null
     fi
 }
@@ -287,7 +435,10 @@ zapret_sync_hostlists() {
     mkdir -p "${dst_dir}" 2>/dev/null
 
     if [ -d "${src_dir}" ]; then
-        cp -f "${src_dir}"/*.txt "${dst_dir}/" 2>/dev/null
+        for f in "${src_dir}"/*.txt; do
+            [ -f "${f}" ] || continue
+            cp -f "${f}" "${dst_dir}/" 2>/dev/null
+        done
         chmod 644 "${dst_dir}"/*.txt 2>/dev/null
     fi
 }

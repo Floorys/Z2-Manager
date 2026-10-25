@@ -4,6 +4,11 @@
 # Repository: Floorys/Z2-Manager
 # ==============================================================================
 
+if [ "$(id -u 2>/dev/null)" -ne 0 ]; then
+    printf "\033[1;31mОшибка: скрипт установки должен быть запущен с правами администратора (root)!\033[0m\n" >&2
+    exit 1
+fi
+
 GREEN="\033[1;32m"
 RED="\033[1;31m"
 CYAN="\033[1;36m"
@@ -15,38 +20,49 @@ INSTALL_DIR="/opt/zapret2-manager"
 BIN_LINK_Z2M="/usr/bin/z2m"
 BIN_LINK_ZSM="/usr/bin/zsm"
 
-echo -e "${CYAN}================================================================${NC}"
-echo -e "${CYAN}             Установка Zapret2-Manager на OpenWrt               ${NC}"
-echo -e "${CYAN}================================================================${NC}"
+printf "%b\n" "${CYAN}================================================================${NC}"
+printf "%b\n" "${CYAN}             Установка Zapret2-Manager на OpenWrt               ${NC}"
+printf "%b\n" "${CYAN}================================================================${NC}"
 
 # 1. Проверка OpenWrt
 if [ ! -f /etc/openwrt_release ] && [ ! -f /etc/os-release ]; then
-    echo -e "${RED}Ошибка: данный скрипт предназначен только для OpenWrt!${NC}"
+    printf "%b\n" "${RED}Ошибка: данный скрипт предназначен только для OpenWrt!${NC}" >&2
     exit 1
 fi
 
-# 2. Определение менеджера пакетов (apk или opkg)
+# 2. Проверка наличия утилит загрузки (curl или wget)
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+    printf "%b\n" "${RED}Ошибка: в системе не найдены ни curl, ни wget!${NC}" >&2
+    printf "%b\n" "${YELLOW}Для работы инсталлятора требуется утилита загрузки по сети.${NC}" >&2
+    printf "Установите необходимые пакеты командой:\n" >&2
+    printf "  opkg update && opkg install curl ca-bundle libustream-mbedtls\n" >&2
+    printf "или для OpenWrt с apk:\n" >&2
+    printf "  apk add curl ca-certificates\n" >&2
+    exit 1
+fi
+
+# 3. Определение менеджера пакетов (apk или opkg)
 if command -v apk >/dev/null 2>&1; then
     PKG_MGR="apk"
     PKG_EXT="apk"
-    PKG_INSTALL="apk add --allow-untrusted"
 elif command -v opkg >/dev/null 2>&1; then
     PKG_MGR="opkg"
     PKG_EXT="ipk"
-    PKG_INSTALL="opkg install"
 else
-    echo -e "${RED}Ошибка: менеджер пакетов (opkg/apk) не найден!${NC}"
+    printf "%b\n" "${RED}Ошибка: менеджер пакетов (opkg/apk) не найден!${NC}" >&2
     exit 1
 fi
 
-# 3. Определение модели устройства, версии OpenWrt и архитектуры
+# 4. Определение модели устройства, версии OpenWrt и архитектуры
 ROUTER_MODEL="$(cat /tmp/sysinfo/model 2>/dev/null)"
 [ -z "${ROUTER_MODEL}" ] && ROUTER_MODEL="$(grep -i 'machine' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//')"
 [ -z "${ROUTER_MODEL}" ] && ROUTER_MODEL="$(grep -i 'Hardware' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//')"
 [ -z "${ROUTER_MODEL}" ] && ROUTER_MODEL="OpenWrt Router"
 
 OWRT_REL="$(grep '^DISTRIB_RELEASE=' /etc/openwrt_release 2>/dev/null | cut -d"'" -f2)"
-[ -z "${OWRT_REL}" ] && [ -f /etc/os-release ] && OWRT_REL="$(. /etc/os-release 2>/dev/null; echo "$VERSION_ID")"
+if [ -z "${OWRT_REL}" ] && [ -f /etc/os-release ]; then
+    OWRT_REL="$(. /etc/os-release 2>/dev/null; echo "${VERSION_ID:-Unknown}")"
+fi
 [ -z "${OWRT_REL}" ] && OWRT_REL="Unknown"
 
 # Определение целевой архитектуры процессора
@@ -58,26 +74,29 @@ if [ -z "${ARCH}" ] && [ "${PKG_MGR}" = "apk" ]; then
     ARCH="$(apk --print-arch 2>/dev/null)"
 fi
 if [ -z "${ARCH}" ] && [ -f /etc/os-release ]; then
-    . /etc/os-release 2>/dev/null
-    ARCH="${OPENWRT_ARCH}"
+    ARCH="$(. /etc/os-release 2>/dev/null; echo "${OPENWRT_ARCH:-}")"
 fi
 if [ -z "${ARCH}" ] && [ -f /etc/openwrt_release ]; then
     ARCH="$(grep '^DISTRIB_ARCH=' /etc/openwrt_release 2>/dev/null | cut -d"'" -f2)"
 fi
+if [ -z "${ARCH}" ]; then
+    ARCH="$(uname -m 2>/dev/null)"
+fi
 [ -z "${ARCH}" ] && ARCH="unknown"
 
-echo -e "  Устройство    : ${GREEN}${ROUTER_MODEL}${NC}"
-echo -e "  Версия OpenWrt: ${GREEN}${OWRT_REL}${NC}"
-echo -e "  Архитектура   : ${GREEN}${ARCH}${NC}"
-echo -e "  Менеджер ПО   : ${GREEN}${PKG_MGR}${NC}"
-echo -e "${CYAN}----------------------------------------------------------------${NC}"
+printf "  Устройство    : %b%s%b\n" "${GREEN}" "${ROUTER_MODEL}" "${NC}"
+printf "  Версия OpenWrt: %b%s%b\n" "${GREEN}" "${OWRT_REL}" "${NC}"
+printf "  Архитектура   : %b%s%b\n" "${GREEN}" "${ARCH}" "${NC}"
+printf "  Менеджер ПО   : %b%s%b\n" "${GREEN}" "${PKG_MGR}" "${NC}"
+printf "%b\n" "${CYAN}----------------------------------------------------------------${NC}"
 
-# 4. Проверка и установка базовых утилит (curl, wget)
-if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
-    echo -e "${YELLOW}Обновляем списки пакетов и ставим curl...${NC}"
-    [ "${PKG_MGR}" = "opkg" ] && opkg update >/dev/null 2>&1
-    ${PKG_INSTALL} curl >/dev/null 2>&1
-fi
+# Подготовка изолированной временной папки для установки
+TMP_WORK_DIR="$(mktemp -d /tmp/z2m_install.XXXXXX 2>/dev/null || echo "/tmp/z2m_install_$$")"
+mkdir -p "${TMP_WORK_DIR}" 2>/dev/null
+cleanup_install() {
+    rm -rf "${TMP_WORK_DIR}" 2>/dev/null
+}
+trap cleanup_install EXIT INT TERM
 
 # 5. Проверка наличия zapret2 (все возможные пути и менеджеры пакетов)
 zapret_already_installed() {
@@ -98,11 +117,25 @@ zapret_already_installed() {
     return 1
 }
 
+# Универсальный загрузчик файлов
+install_download() {
+    dl_url="$1"
+    dl_dst="$2"
+    rm -f "${dl_dst}" 2>/dev/null
+    if command -v curl >/dev/null 2>&1; then
+        curl -sSL -k --connect-timeout 8 -m 60 "${dl_url}" -o "${dl_dst}" 2>/dev/null
+    fi
+    if [ ! -s "${dl_dst}" ] && command -v wget >/dev/null 2>&1; then
+        wget -q --timeout=30 -O "${dl_dst}" "${dl_url}" 2>/dev/null
+    fi
+    [ -s "${dl_dst}" ]
+}
+
 if zapret_already_installed; then
-    echo -e "  Статус Zapret2: ${GREEN}Обнаружен установленный Zapret2 в системе (пропуск повторной установки)${NC}"
+    printf "  Статус Zapret2: %bОбнаружен установленный Zapret2 в системе (пропуск)%b\n" "${GREEN}" "${NC}"
 else
-    echo -e "${YELLOW}Zapret2 не обнаружен в системе.${NC}"
-    echo -e "${CYAN}Автоматическая загрузка zapret2 под архитектуру ${ARCH}...${NC}"
+    printf "%b\n" "${YELLOW}Zapret2 не обнаружен в системе.${NC}"
+    printf "%b\n" "${CYAN}Автоматическая загрузка zapret2 под архитектуру ${ARCH}...${NC}"
 
     ZAPRET_BASE_URL="https://github.com/1andrevich/zapret2-openwrt/releases/latest/download"
 
@@ -117,46 +150,54 @@ else
         *)        FALLBACK_ARCH="" ;;
     esac
 
+    PKG_FILE="${TMP_WORK_DIR}/zapret2.${PKG_EXT}"
+    LUCI_FILE="${TMP_WORK_DIR}/luci-app-zapret2.${PKG_EXT}"
+
     if [ "${PKG_MGR}" = "apk" ]; then
         mkdir -p /etc/apk/keys 2>/dev/null
-        wget -q -O /etc/apk/keys/zapret2-1andrevich.pub "${ZAPRET_BASE_URL}/zapret2-1andrevich.pub" 2>/dev/null
-        wget -q -O /tmp/zapret2.apk "${ZAPRET_BASE_URL}/zapret2_${ARCH}.apk" 2>/dev/null
-        if [ ! -s /tmp/zapret2.apk ] && [ -n "${FALLBACK_ARCH}" ]; then
-            echo -e "${YELLOW}Пробуем совместимую архитектуру ${FALLBACK_ARCH}...${NC}"
-            wget -q -O /tmp/zapret2.apk "${ZAPRET_BASE_URL}/zapret2_${FALLBACK_ARCH}.apk" 2>/dev/null
+        install_download "${ZAPRET_BASE_URL}/zapret2-1andrevich.pub" "/etc/apk/keys/zapret2-1andrevich.pub"
+        install_download "${ZAPRET_BASE_URL}/zapret2_${ARCH}.apk" "${PKG_FILE}"
+        if [ ! -s "${PKG_FILE}" ] && [ -n "${FALLBACK_ARCH}" ]; then
+            printf "%b\n" "${YELLOW}Пробуем совместимую архитектуру ${FALLBACK_ARCH}...${NC}"
+            install_download "${ZAPRET_BASE_URL}/zapret2_${FALLBACK_ARCH}.apk" "${PKG_FILE}"
         fi
-        wget -q -O /tmp/luci-app-zapret2.apk "${ZAPRET_BASE_URL}/luci-app-zapret2.apk" 2>/dev/null
+        install_download "${ZAPRET_BASE_URL}/luci-app-zapret2.apk" "${LUCI_FILE}"
 
-        if [ -s /tmp/zapret2.apk ]; then
-            apk add --allow-untrusted /tmp/zapret2.apk /tmp/luci-app-zapret2.apk
+        if [ -s "${PKG_FILE}" ]; then
+            if [ -s "${LUCI_FILE}" ]; then
+                apk add --allow-untrusted "${PKG_FILE}" "${LUCI_FILE}"
+            else
+                apk add --allow-untrusted "${PKG_FILE}"
+            fi
         else
-            echo -e "${RED}Пакет под ${ARCH} не найден в релизах zapret2-openwrt.${NC}"
+            printf "%b\n" "${RED}Пакет под ${ARCH} не найден в релизах zapret2-openwrt.${NC}" >&2
         fi
-        rm -f /tmp/zapret2.apk /tmp/luci-app-zapret2.apk 2>/dev/null
     else
         # opkg
-        wget -q -O /tmp/zapret2.ipk "${ZAPRET_BASE_URL}/zapret2_${ARCH}.ipk" 2>/dev/null
-        if [ ! -s /tmp/zapret2.ipk ] && [ -n "${FALLBACK_ARCH}" ]; then
-            echo -e "${YELLOW}Пробуем совместимую архитектуру ${FALLBACK_ARCH}...${NC}"
-            wget -q -O /tmp/zapret2.ipk "${ZAPRET_BASE_URL}/zapret2_${FALLBACK_ARCH}.ipk" 2>/dev/null
+        install_download "${ZAPRET_BASE_URL}/zapret2_${ARCH}.ipk" "${PKG_FILE}"
+        if [ ! -s "${PKG_FILE}" ] && [ -n "${FALLBACK_ARCH}" ]; then
+            printf "%b\n" "${YELLOW}Пробуем совместимую архитектуру ${FALLBACK_ARCH}...${NC}"
+            install_download "${ZAPRET_BASE_URL}/zapret2_${FALLBACK_ARCH}.ipk" "${PKG_FILE}"
         fi
+        install_download "${ZAPRET_BASE_URL}/luci-app-zapret2.ipk" "${LUCI_FILE}"
 
-        wget -q -O /tmp/luci-app-zapret2.ipk "${ZAPRET_BASE_URL}/luci-app-zapret2.ipk" 2>/dev/null
-
-        if [ -s /tmp/zapret2.ipk ]; then
+        if [ -s "${PKG_FILE}" ]; then
             opkg update >/dev/null 2>&1
-            opkg install /tmp/zapret2.ipk /tmp/luci-app-zapret2.ipk
+            if [ -s "${LUCI_FILE}" ]; then
+                opkg install "${PKG_FILE}" "${LUCI_FILE}"
+            else
+                opkg install "${PKG_FILE}"
+            fi
         else
-            echo -e "${RED}Не удалось автоматически загрузить zapret2_${ARCH}.ipk${NC}"
+            printf "%b\n" "${RED}Не удалось автоматически загрузить zapret2_${ARCH}.ipk${NC}" >&2
         fi
-        rm -f /tmp/zapret2.ipk /tmp/luci-app-zapret2.ipk 2>/dev/null
     fi
 
     if zapret_already_installed; then
-        echo -e "${GREEN}Пакет zapret2 успешно установлен на роутер!${NC}"
+        printf "%b\n" "${GREEN}Пакет zapret2 успешно установлен на роутер!${NC}"
         /etc/init.d/zapret2 enable 2>/dev/null
     else
-        echo -e "${YELLOW}Предупреждение: zapret2 не найден автоматически. При необходимости установите его вручную.${NC}"
+        printf "%b\n" "${YELLOW}Предупреждение: zapret2 не найден автоматически. При необходимости установите его вручную.${NC}"
     fi
     echo ""
 fi
@@ -167,55 +208,36 @@ SCRIPT_SOURCE_DIR="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)"
 
 if [ -f "${SCRIPT_SOURCE_DIR}/zapret2-manager.sh" ]; then
     # Локальная установка из папки репозитория
-    echo -e "${CYAN}Копируем файлы в ${INSTALL_DIR}...${NC}"
+    printf "%b\n" "${CYAN}Копируем файлы в ${INSTALL_DIR}...${NC}"
     mkdir -p "${INSTALL_DIR}"
     cp -rf "${SCRIPT_SOURCE_DIR}/"* "${INSTALL_DIR}/"
 else
     # Загрузка и распаковка с GitHub (Floorys/Z2-Manager)
-    DOWNLOAD_TAR="/tmp/z2m_repo.tar.gz"
-    TMP_UNPACK="/tmp/z2m_unpack"
-    rm -rf "${DOWNLOAD_TAR}" "${TMP_UNPACK}" 2>/dev/null
-    mkdir -p "${TMP_UNPACK}"
+    DOWNLOAD_TAR="${TMP_WORK_DIR}/z2m_repo.tar.gz"
+    TMP_UNPACK="${TMP_WORK_DIR}/unpack"
+    mkdir -p "${TMP_UNPACK}" 2>/dev/null
 
-    echo -e "${CYAN}Загружаем Z2-Manager с GitHub (Floorys/Z2-Manager)...${NC}"
+    printf "%b\n" "${CYAN}Загружаем Z2-Manager с GitHub (Floorys/Z2-Manager)...${NC}"
     REPO_URL="https://github.com/Floorys/Z2-Manager/archive/refs/heads/main.tar.gz"
 
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "${REPO_URL}" -o "${DOWNLOAD_TAR}" 2>/dev/null
-    fi
-    if [ ! -s "${DOWNLOAD_TAR}" ] && command -v wget >/dev/null 2>&1; then
-        wget -qO "${DOWNLOAD_TAR}" "${REPO_URL}" 2>/dev/null
-    fi
-
-    # Fallback to ZIP если tar.gz не скачался
-    if [ ! -s "${DOWNLOAD_TAR}" ]; then
+    if ! install_download "${REPO_URL}" "${DOWNLOAD_TAR}"; then
         ZIP_URL="https://github.com/Floorys/Z2-Manager/archive/refs/heads/main.zip"
-        DOWNLOAD_ZIP="/tmp/z2m_repo.zip"
-        if command -v wget >/dev/null 2>&1; then
-            wget -qO "${DOWNLOAD_ZIP}" "${ZIP_URL}" 2>/dev/null
-        elif command -v curl >/dev/null 2>&1; then
-            curl -fsSL "${ZIP_URL}" -o "${DOWNLOAD_ZIP}" 2>/dev/null
-        fi
-
-        if [ -s "${DOWNLOAD_ZIP}" ] && command -v unzip >/dev/null 2>&1; then
+        DOWNLOAD_ZIP="${TMP_WORK_DIR}/z2m_repo.zip"
+        if install_download "${ZIP_URL}" "${DOWNLOAD_ZIP}" && command -v unzip >/dev/null 2>&1; then
             unzip -q -o "${DOWNLOAD_ZIP}" -d "${TMP_UNPACK}" 2>/dev/null
-            rm -f "${DOWNLOAD_ZIP}" 2>/dev/null
         fi
     else
-        # Распаковка стандартным BusyBox tar
         tar -xzf "${DOWNLOAD_TAR}" -C "${TMP_UNPACK}" 2>/dev/null
     fi
 
-    EXTRACTED_DIR="$(find "${TMP_UNPACK}" -maxdepth 1 -mindepth 1 -type d | head -n1)"
+    EXTRACTED_DIR="$(find "${TMP_UNPACK}" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -n1)"
     if [ -z "${EXTRACTED_DIR}" ] || [ ! -f "${EXTRACTED_DIR}/zapret2-manager.sh" ]; then
-        echo -e "${RED}Ошибка распаковки: zapret2-manager.sh не найден в архиве!${NC}"
-        rm -rf "${DOWNLOAD_TAR}" "${TMP_UNPACK}" 2>/dev/null
+        printf "%b\n" "${RED}Ошибка распаковки: zapret2-manager.sh не найден в архиве!${NC}" >&2
         exit 1
     fi
 
     mkdir -p "${INSTALL_DIR}"
     cp -rf "${EXTRACTED_DIR}/"* "${INSTALL_DIR}/"
-    rm -rf "${DOWNLOAD_TAR}" "${TMP_UNPACK}" 2>/dev/null
 fi
 
 # 7. Нормализация переводов строк (удаление Windows \r)
@@ -245,7 +267,7 @@ chmod +x "${BIN_LINK_ZSM}" 2>/dev/null
 # 10. Первичная синхронизация блобов, хостлистов и установка фикса Discord Voice
 mkdir -p /opt/zapret2/files/fake /opt/zapret2/ipset /opt/zapret2/init.d/openwrt/custom.d 2>/dev/null
 if [ -d "${INSTALL_DIR}/fake" ]; then
-    echo -e "${CYAN}Копируем fake-блобы и списки доменов в /opt/zapret2...${NC}"
+    printf "%b\n" "${CYAN}Копируем fake-блобы и списки доменов в /opt/zapret2...${NC}"
     cp -f "${INSTALL_DIR}/fake/"*.bin /opt/zapret2/files/fake/ 2>/dev/null
     chmod 644 /opt/zapret2/files/fake/*.bin 2>/dev/null
 fi
@@ -256,7 +278,7 @@ fi
 
 # Установка объединенного фикса Discord Voice (custom.d script #50)
 if [ -f "${INSTALL_DIR}/templates/50-script.sh" ]; then
-    echo -e "${CYAN}Устанавливаем исправление Discord Voice (custom.d script #50)...${NC}"
+    printf "%b\n" "${CYAN}Устанавливаем исправление Discord Voice (custom.d script #50)...${NC}"
     cp -f "${INSTALL_DIR}/templates/50-script.sh" /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
     chmod 755 /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
     rm -f /opt/zapret2/init.d/openwrt/custom.d/50-stun4all* /opt/zapret2/init.d/openwrt/custom.d/50-discord* 2>/dev/null
@@ -297,21 +319,21 @@ fi
 # 11. Тестовый запуск для проверки
 echo ""
 if /bin/sh /opt/zapret2-manager/zapret2-manager.sh --help >/dev/null 2>&1; then
-    echo -e "${GREEN}✔ Проверка запуска команды z2m: УСПЕШНО${NC}"
+    printf "%b\n" "${GREEN}✔ Проверка запуска команды z2m: УСПЕШНО${NC}"
 else
-    echo -e "${RED}✖ Предупреждение: тестовый запуск завершился с ошибкой.${NC}"
+    printf "%b\n" "${RED}✖ Предупреждение: тестовый запуск завершился с ошибкой.${NC}"
 fi
 
 echo ""
-echo -e "${GREEN}================================================================${NC}"
-echo -e "${GREEN}       Zapret2-Manager успешно установлен!                     ${NC}"
-echo -e "${GREEN}================================================================${NC}"
-echo -e "Для запуска интерактивного меню введите команду:  ${BOLD}${YELLOW}z2m${NC}  (или ${BOLD}${YELLOW}zsm${NC})"
-echo -e "Для автоподбора лучшей стратегии:                ${BOLD}${YELLOW}z2m -a${NC}"
-echo -e "Для двухпроходного генератора:                   ${BOLD}${YELLOW}z2m -g${NC}"
-echo -e "Для проверки YouTube:                            ${BOLD}${YELLOW}z2m -yt${NC}"
-echo -e "Для проверки Discord:                            ${BOLD}${YELLOW}z2m -dc${NC}"
-echo -e "Для центра обновлений (Zapret2 и Z2M):           ${BOLD}${YELLOW}z2m -u${NC}"
-echo -e "Для быстрого обновления пакета Zapret2:          ${BOLD}${YELLOW}z2m -uz${NC}"
-echo -e "Для проверки обновлений:                         ${BOLD}${YELLOW}z2m -cu${NC}"
+printf "%b\n" "${GREEN}================================================================${NC}"
+printf "%b\n" "${GREEN}       Zapret2-Manager успешно установлен!                     ${NC}"
+printf "%b\n" "${GREEN}================================================================${NC}"
+printf "Для запуска интерактивного меню введите команду:  %b%sz2m%b  (или %b%szsm%b)\n" "${BOLD}" "${YELLOW}" "${NC}" "${BOLD}" "${YELLOW}" "${NC}"
+printf "Для автоподбора лучшей стратегии:                %b%sz2m -a%b\n" "${BOLD}" "${YELLOW}" "${NC}"
+printf "Для двухпроходного генератора:                   %b%sz2m -g%b\n" "${BOLD}" "${YELLOW}" "${NC}"
+printf "Для проверки YouTube:                            %b%sz2m -yt%b\n" "${BOLD}" "${YELLOW}" "${NC}"
+printf "Для проверки Discord:                            %b%sz2m -dc%b\n" "${BOLD}" "${YELLOW}" "${NC}"
+printf "Для центра обновлений (Zapret2 и Z2M):           %b%sz2m -u%b\n" "${BOLD}" "${YELLOW}" "${NC}"
+printf "Для быстрого обновления пакета Zapret2:          %b%sz2m -uz%b\n" "${BOLD}" "${YELLOW}" "${NC}"
+printf "Для проверки обновлений:                         %b%sz2m -cu%b\n" "${BOLD}" "${YELLOW}" "${NC}"
 echo ""

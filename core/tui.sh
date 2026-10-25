@@ -1,14 +1,15 @@
 #!/bin/sh
+# shellcheck disable=SC3043
 # ==============================================================================
 # Zapret2-Manager: Terminal UI & Formatting Helpers
 # ==============================================================================
 
-[ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+[ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
 [ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
 
 tui_banner() {
-    clear
-    printf "${CYAN}"
+    clear 2>/dev/null || printf "\033c"
+    printf "%b" "${CYAN}"
     cat << "EOF"
   ███████╗ █████╗ ██████╗ ██████╗ ███████╗████████╗██████╗     ███╗   ███╗
   ╚══███╔╝██╔══██╗██╔══██╗██╔══██╗██╔════╝╚══██╔══╝╚════██╗    ████╗ ████║
@@ -17,42 +18,42 @@ tui_banner() {
   ███████╗██║  ██║██║     ██║  ██║███████╗   ██║   ███████╗    ██║ ╚═╝ ██║
   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝    ╚═╝     ╚═╝
 EOF
-    printf "${NC}"
-    printf "${DGRAY}  Zapret2 Manager v%s | Asterlike & 1andrevich Architecture${NC}\n" "${Z2M_VERSION}"
-    printf "${DGRAY}  ───────────────────────────────────────────────────────────────────${NC}\n\n"
+    printf "%b" "${NC}"
+    printf "%b  Zapret2 Manager v%s | Asterlike & 1andrevich Architecture%b\n" "${DGRAY}" "${Z2M_VERSION}" "${NC}"
+    printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
 }
 
 tui_header() {
     local title="$1"
-    printf "${BOLD}${WHITE}%s${NC}\n" "${title}"
-    printf "${DGRAY}%s${NC}\n\n" "───────────────────────────────────────────────────────────────────"
+    printf "%b%b%s%b\n" "${BOLD}" "${WHITE}" "${title}" "${NC}"
+    printf "%b%s%b\n\n" "${DGRAY}" "───────────────────────────────────────────────────────────────────" "${NC}"
 }
 
 tui_info() {
-    printf "${CYAN}ℹ %s${NC}\n" "$1"
+    printf "%bℹ %s%b\n" "${CYAN}" "$1" "${NC}"
 }
 
 tui_success() {
-    printf "${GREEN}✔ %s${NC}\n" "$1"
+    printf "%b✔ %s%b\n" "${GREEN}" "$1" "${NC}"
 }
 
 tui_warn() {
-    printf "${YELLOW}⚠ %s${NC}\n" "$1"
+    printf "%b⚠ %s%b\n" "${YELLOW}" "$1" "${NC}"
 }
 
 tui_error() {
-    printf "${RED}✖ %s${NC}\n" "$1"
+    printf "%b✖ %s%b\n" "${RED}" "$1" "${NC}" >&2
 }
 
 tui_step() {
     local current="$1"
     local total="$2"
     local msg="$3"
-    printf "${MAGENTA}[%s/%s]${NC} %s\n" "${current}" "${total}" "${msg}"
+    printf "%b[%s/%s]%b %s\n" "${MAGENTA}" "${current}" "${total}" "${NC}" "${msg}"
 }
 
 tui_pause() {
-    printf "\n${DGRAY}Нажмите [Enter] для продолжения...${NC} " >&2
+    printf "\n%bНажмите [Enter] для продолжения...%b " "${DGRAY}" "${NC}" >&2
     # shellcheck disable=SC2034
     read -r dummy </dev/tty 2>/dev/null || read -r dummy
 }
@@ -63,7 +64,7 @@ tui_prompt() {
     local user_val=""
 
     if [ -n "${default_val}" ]; then
-        printf "%b ${DGRAY}[%s]${NC}: " "${prompt_text}" "${default_val}" >&2
+        printf "%b %b[%s]%b: " "${prompt_text}" "${DGRAY}" "${default_val}" "${NC}" >&2
     else
         printf "%b: " "${prompt_text}" >&2
     fi
@@ -79,8 +80,8 @@ tui_prompt() {
 }
 
 tui_print_result_table_header() {
-    printf "${BOLD}%-36s %-10s %-10s %-10s${NC}\n" "Стратегия / Бандл" "Успешно" "Ошибок" "Статус"
-    printf "${DGRAY}───────────────────────────────────────────────────────────────────${NC}\n"
+    printf "%b%-36s %-10s %-10s %-10s%b\n" "${BOLD}" "Стратегия / Бандл" "Успешно" "Ошибок" "Статус" "${NC}"
+    printf "%b───────────────────────────────────────────────────────────────────%b\n" "${DGRAY}" "${NC}"
 }
 
 tui_print_result_row() {
@@ -102,6 +103,6 @@ tui_print_result_row() {
     # Trim name to fit table
     local short_name
     short_name=$(printf "%.34s" "${name}")
-    printf "%-36s ${GREEN}%-10s${NC} ${RED}%-10s${NC} ${color}%s %s/%s${NC}\n" \
-        "${short_name}" "${ok}" "${fail}" "${glyph}" "${ok}" "${total}"
+    printf "%-36s %b%-10s%b %b%-10s%b %b%s %s/%s%b\n" \
+        "${short_name}" "${GREEN}" "${ok}" "${NC}" "${RED}" "${fail}" "${NC}" "${color}" "${glyph}" "${ok}" "${total}" "${NC}"
 }

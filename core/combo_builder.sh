@@ -4,7 +4,7 @@
 # Port of PresetService.BuildComboArgs from Asterlike/zapret2UI
 # ==============================================================================
 
-[ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+[ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
 [ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
 
 # Build full NFQWS2_OPT argument string from components:
@@ -39,22 +39,24 @@ combo_build_args() {
 
     # Determine fake blob directory
     local fdir="${ZAPRET2_FAKE_DIR}"
-    [ ! -d "${fdir}" ] && fdir="${Z2M_DIR}/fake"
+    if [ ! -f "${fdir}/tls_clienthello_www_google_com.bin" ]; then
+        fdir="${Z2M_DIR}/fake"
+    fi
 
     # Declare all available fake blobs
     local blobs=""
     [ -f "${fdir}/tls_clienthello_www_google_com.bin" ] && \
-        blobs="${blobs} --blob=tls_google:@${ZAPRET2_FAKE_DIR}/tls_clienthello_www_google_com.bin"
+        blobs="${blobs} --blob=tls_google:@${fdir}/tls_clienthello_www_google_com.bin"
     [ -f "${fdir}/quic_initial_www_google_com.bin" ] && \
-        blobs="${blobs} --blob=quic_google:@${ZAPRET2_FAKE_DIR}/quic_initial_www_google_com.bin"
+        blobs="${blobs} --blob=quic_google:@${fdir}/quic_initial_www_google_com.bin"
     [ -f "${fdir}/tls_clienthello_vk_com.bin" ] && \
-        blobs="${blobs} --blob=tls_vk:@${ZAPRET2_FAKE_DIR}/tls_clienthello_vk_com.bin"
+        blobs="${blobs} --blob=tls_vk:@${fdir}/tls_clienthello_vk_com.bin"
     [ -f "${fdir}/tls_clienthello_sberbank_ru.bin" ] && \
-        blobs="${blobs} --blob=tls_sber:@${ZAPRET2_FAKE_DIR}/tls_clienthello_sberbank_ru.bin"
+        blobs="${blobs} --blob=tls_sber:@${fdir}/tls_clienthello_sberbank_ru.bin"
     [ -f "${fdir}/tls_clienthello_gosuslugi_ru.bin" ] && \
-        blobs="${blobs} --blob=tls_gos:@${ZAPRET2_FAKE_DIR}/tls_clienthello_gosuslugi_ru.bin"
+        blobs="${blobs} --blob=tls_gos:@${fdir}/tls_clienthello_gosuslugi_ru.bin"
     [ -f "${fdir}/quic_initial_vk_com.bin" ] && \
-        blobs="${blobs} --blob=quic_vk:@${ZAPRET2_FAKE_DIR}/quic_initial_vk_com.bin"
+        blobs="${blobs} --blob=quic_vk:@${fdir}/quic_initial_vk_com.bin"
 
     # Base options (no double quotes to prevent syntax corruption in /opt/zapret2/config)
     local opt="--ctrack-disable=0 --ipcache-lifetime=8400 --ipcache-hostname=1${blobs}"
@@ -89,21 +91,23 @@ combo_build_single_test_args() {
     local candidate_tls="$1"
 
     local fdir="${ZAPRET2_FAKE_DIR}"
-    [ ! -d "${fdir}" ] && fdir="${Z2M_DIR}/fake"
+    if [ ! -f "${fdir}/tls_clienthello_www_google_com.bin" ]; then
+        fdir="${Z2M_DIR}/fake"
+    fi
 
     local blobs=""
     [ -f "${fdir}/tls_clienthello_www_google_com.bin" ] && \
-        blobs="${blobs} --blob=tls_google:@${ZAPRET2_FAKE_DIR}/tls_clienthello_www_google_com.bin"
+        blobs="${blobs} --blob=tls_google:@${fdir}/tls_clienthello_www_google_com.bin"
     [ -f "${fdir}/quic_initial_www_google_com.bin" ] && \
-        blobs="${blobs} --blob=quic_google:@${ZAPRET2_FAKE_DIR}/quic_initial_www_google_com.bin"
+        blobs="${blobs} --blob=quic_google:@${fdir}/quic_initial_www_google_com.bin"
     [ -f "${fdir}/tls_clienthello_vk_com.bin" ] && \
-        blobs="${blobs} --blob=tls_vk:@${ZAPRET2_FAKE_DIR}/tls_clienthello_vk_com.bin"
+        blobs="${blobs} --blob=tls_vk:@${fdir}/tls_clienthello_vk_com.bin"
     [ -f "${fdir}/tls_clienthello_sberbank_ru.bin" ] && \
-        blobs="${blobs} --blob=tls_sber:@${ZAPRET2_FAKE_DIR}/tls_clienthello_sberbank_ru.bin"
+        blobs="${blobs} --blob=tls_sber:@${fdir}/tls_clienthello_sberbank_ru.bin"
     [ -f "${fdir}/tls_clienthello_gosuslugi_ru.bin" ] && \
-        blobs="${blobs} --blob=tls_gos:@${ZAPRET2_FAKE_DIR}/tls_clienthello_gosuslugi_ru.bin"
+        blobs="${blobs} --blob=tls_gos:@${fdir}/tls_clienthello_gosuslugi_ru.bin"
     [ -f "${fdir}/quic_initial_vk_com.bin" ] && \
-        blobs="${blobs} --blob=quic_vk:@${ZAPRET2_FAKE_DIR}/quic_initial_vk_com.bin"
+        blobs="${blobs} --blob=quic_vk:@${fdir}/quic_initial_vk_com.bin"
 
     local opt="--ctrack-disable=0 --ipcache-lifetime=8400 --ipcache-hostname=1${blobs}"
     opt="${opt} --filter-tcp=443-65535 --filter-l7=tls --out-range=-d10 --payload=tls_client_hello ${candidate_tls}"

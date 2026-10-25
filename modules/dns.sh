@@ -4,7 +4,7 @@
 # DNS leak prevention and DNS-over-HTTPS configuration for OpenWrt
 # ==============================================================================
 
-[ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+[ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
 [ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
 [ -f "${Z2M_DIR}/core/tui.sh" ] && . "${Z2M_DIR}/core/tui.sh"
 
@@ -33,14 +33,14 @@ run_dns_menu() {
 
         local cur_dns
         cur_dns=$(get_current_dns)
-        printf "  ${BOLD}Текущие DNS:${NC} ${CYAN}%s${NC}\n" "${cur_dns}"
+        printf "  %bТекущие DNS:%b %b%s%b\n" "${BOLD}" "${NC}" "${CYAN}" "${cur_dns}" "${NC}"
 
         local doh_status="${RED}Не активен${NC}"
         if is_doh_running; then
             doh_status="${GREEN}Работает (https-dns-proxy)${NC}"
         fi
-        printf "  ${BOLD}Статус DoH :${NC} %b\n" "${doh_status}"
-        printf "  ${DGRAY}───────────────────────────────────────────────────────────────────${NC}\n\n"
+        printf "  %bСтатус DoH :%b %b\n" "${BOLD}" "${NC}" "${doh_status}"
+        printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
 
         printf "  1. 🩺 Проверить DNS на подмену (DNS Poisoning / заглушка РКН)\n"
         printf "  2. 🌐 Настроить DNS-over-HTTPS (DoH: Google, Quad9, Xbox, DNS.ru...)\n"
@@ -93,7 +93,7 @@ _check_dns_poisoning() {
 
     echo ""
     if [ -n "${ip}" ]; then
-        printf "  Домен %s разрешен в IP: ${CYAN}%s${NC}\n" "${test_domain}" "${ip}"
+        printf "  Домен %s разрешен в IP: %b%s%b\n" "${test_domain}" "${CYAN}" "${ip}" "${NC}"
         case "${ip}" in
             127.0.0.1|0.0.0.0|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*)
                 tui_error "ВНИМАНИЕ: Обнаружена подмена DNS провайдером (DNS Spoofing / Локальная заглушка)!"
@@ -112,14 +112,14 @@ _check_dns_poisoning() {
 _setup_doh() {
     tui_banner
     tui_header "Выбор провайдера DNS-over-HTTPS (DoH)"
-    printf "  ${BOLD}1.${NC} Google DNS      ${DGRAY}(https://dns.google/dns-query | 8.8.8.8)${NC}\n"
-    printf "  ${BOLD}2.${NC} Quad9 DNS       ${DGRAY}(https://dns.quad9.net/dns-query | 9.9.9.9, без цензуры)${NC}\n"
-    printf "  ${BOLD}3.${NC} Xbox / Comss    ${DGRAY}(https://dns.comss.one/dns-query | обход блокировок консолей)${NC}\n"
-    printf "  ${BOLD}4.${NC} DNS.ru / Yandex ${DGRAY}(https://common.dot.dns.yandex.net/dns-query | быстрый RU)${NC}\n"
-    printf "  ${BOLD}5.${NC} Cloudflare DNS  ${DGRAY}(https://cloudflare-dns.com/dns-query | 1.1.1.1)${NC}\n"
-    printf "  ${BOLD}6.${NC} AdGuard DNS     ${DGRAY}(https://dns.adguard.com/dns-query | блокировка рекламы)${NC}\n"
-    printf "  ${BOLD}7.${NC} Пользовательский DoH URL\n"
-    printf "  ${BOLD}0.${NC} Отмена\n\n"
+    printf "  %b1.%b Google DNS      %b(https://dns.google/dns-query | 8.8.8.8)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b2.%b Quad9 DNS       %b(https://dns.quad9.net/dns-query | 9.9.9.9, без цензуры)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b3.%b Xbox / Comss    %b(https://dns.comss.one/dns-query | обход блокировок консолей)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b4.%b DNS.ru / Yandex %b(https://common.dot.dns.yandex.net/dns-query | быстрый RU)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b5.%b Cloudflare DNS  %b(https://cloudflare-dns.com/dns-query | 1.1.1.1)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b6.%b AdGuard DNS     %b(https://dns.adguard.com/dns-query | блокировка рекламы)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b7.%b Пользовательский DoH URL\n" "${BOLD}" "${NC}"
+    printf "  %b0.%b Отмена\n\n" "${BOLD}" "${NC}"
 
     local p_choice
     p_choice=$(tui_prompt "Выберите провайдера" "1")
@@ -225,13 +225,13 @@ _setup_doh() {
 _set_secure_dnsmasq() {
     tui_banner
     tui_header "Выбор безопасных DNS для dnsmasq"
-    printf "  ${BOLD}1.${NC} Google DNS      ${DGRAY}(8.8.8.8, 8.8.4.4)${NC}\n"
-    printf "  ${BOLD}2.${NC} Quad9 DNS       ${DGRAY}(9.9.9.9, 149.112.112.112)${NC}\n"
-    printf "  ${BOLD}3.${NC} Xbox / Comss    ${DGRAY}(95.216.208.204, 188.138.8.199)${NC}\n"
-    printf "  ${BOLD}4.${NC} DNS.ru / Yandex ${DGRAY}(77.88.8.8, 77.88.8.1)${NC}\n"
-    printf "  ${BOLD}5.${NC} Cloudflare DNS  ${DGRAY}(1.1.1.1, 1.0.0.1)${NC}\n"
-    printf "  ${BOLD}6.${NC} AdGuard DNS     ${DGRAY}(94.140.14.14, 94.140.15.15)${NC}\n"
-    printf "  ${BOLD}0.${NC} Отмена\n\n"
+    printf "  %b1.%b Google DNS      %b(8.8.8.8, 8.8.4.4)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b2.%b Quad9 DNS       %b(9.9.9.9, 149.112.112.112)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b3.%b Xbox / Comss    %b(95.216.208.204, 188.138.8.199)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b4.%b DNS.ru / Yandex %b(77.88.8.8, 77.88.8.1)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b5.%b Cloudflare DNS  %b(1.1.1.1, 1.0.0.1)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b6.%b AdGuard DNS     %b(94.140.14.14, 94.140.15.15)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+    printf "  %b0.%b Отмена\n\n" "${BOLD}" "${NC}"
 
     local s_choice
     s_choice=$(tui_prompt "Выберите DNS" "1")

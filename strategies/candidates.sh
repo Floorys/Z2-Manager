@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2034
 # ==============================================================================
 # Zapret2-Manager: Candidate TLS Desync Bundles for Strategy Generator
 # 1:1 port of Candidates from Asterlike/zapret2UI StrategyGeneratorService.cs

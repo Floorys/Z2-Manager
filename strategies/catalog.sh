@@ -1,10 +1,11 @@
 #!/bin/sh
+# shellcheck disable=SC2034
 # ==============================================================================
 # Zapret2-Manager: Strategy Catalog
 # Port of BuiltIns from Asterlike/zapret2UI PresetService.cs
 # ==============================================================================
 
-[ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+[ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
 [ -f "${Z2M_DIR}/core/combo_builder.sh" ] && . "${Z2M_DIR}/core/combo_builder.sh"
 
 CATALOG_COUNT=9

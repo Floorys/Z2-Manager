@@ -4,11 +4,11 @@
 # Comprehensive network reachability, DPI signature detection, and service status
 # ==============================================================================
 
-[ -z "${Z2M_DIR}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
-. "${Z2M_DIR}/core/config.sh"
-. "${Z2M_DIR}/core/tui.sh"
-. "${Z2M_DIR}/core/probe.sh"
-. "${Z2M_DIR}/core/zapret_service.sh"
+[ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+[ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
+[ -f "${Z2M_DIR}/core/tui.sh" ] && . "${Z2M_DIR}/core/tui.sh"
+[ -f "${Z2M_DIR}/core/probe.sh" ] && . "${Z2M_DIR}/core/probe.sh"
+[ -f "${Z2M_DIR}/core/zapret_service.sh" ] && . "${Z2M_DIR}/core/zapret_service.sh"
 
 get_host_category() {
     local h="$1"
@@ -40,13 +40,13 @@ run_diagnostics() {
     }
     trap cleanup_diag INT TERM
 
-    printf "${BOLD}Статус службы Zapret2:${NC} "
+    printf "%bСтатус службы Zapret2:%b " "${BOLD}" "${NC}"
     if zapret_is_running; then
         local pids
         pids=$(pidof nfqws2 2>/dev/null || pgrep nfqws2 2>/dev/null || pidof nfqws 2>/dev/null)
-        printf "${GREEN}Запущена (PID: %s)${NC}\n" "${pids}"
+        printf "%bЗапущена (PID: %s)%b\n" "${GREEN}" "${pids}" "${NC}"
     else
-        printf "${RED}Остановлена${NC}\n"
+        printf "%bОстановлена%b\n" "${RED}" "${NC}"
     fi
 
     local cur_opt
@@ -54,11 +54,11 @@ run_diagnostics() {
     local short_opt
     short_opt=$(printf "%.50s" "${cur_opt}")
     [ ${#cur_opt} -gt 50 ] && short_opt="${short_opt}..."
-    printf "${BOLD}Активный NFQWS2_OPT :${NC} ${CYAN}%s${NC}\n\n" "${short_opt:-по умолчанию}"
+    printf "%bАктивный NFQWS2_OPT :%b %b%s%b\n\n" "${BOLD}" "${NC}" "${CYAN}" "${short_opt:-по умолчанию}" "${NC}"
 
     tui_header "1. Проверка доступности доменов (набор как в Zapret-Manager)"
-    printf "${BOLD}%-24s %-18s %-10s %-14s${NC}\n" "Хост" "Категория" "Статус" "DPI Вердикт"
-    printf "${DGRAY}───────────────────────────────────────────────────────────────────${NC}\n"
+    printf "%b%-24s %-18s %-10s %-14s%b\n" "${BOLD}" "Хост" "Категория" "Статус" "DPI Вердикт" "${NC}"
+    printf "%b───────────────────────────────────────────────────────────────────%b\n" "${DGRAY}" "${NC}"
 
     local total_hosts=0
     local ok_hosts=0
@@ -74,7 +74,7 @@ run_diagnostics() {
         cat_name=$(get_host_category "${host}")
 
         # Live progress indicator
-        printf "%-24s %-18s ${YELLOW}[...] Тест${NC}\r" "${host}" "${cat_name}"
+        printf "%-24s %-18s %b[...] Тест%b\r" "${host}" "${cat_name}" "${YELLOW}" "${NC}"
 
         local is_ok=0
         if probe_http_reach "${host}" 2; then
@@ -101,18 +101,18 @@ run_diagnostics() {
 
         printf "%-24s %-18s " "${host}" "${cat_name}"
         if [ "${is_ok}" -eq 1 ]; then
-            printf "${GREEN}%-10s${NC} " "✓ Доступ"
+            printf "%b%-10s%b " "${GREEN}" "✓ Доступ" "${NC}"
         else
-            printf "${RED}%-10s${NC} " "✗ Блок"
+            printf "%b%-10s%b " "${RED}" "✗ Блок" "${NC}"
         fi
-        printf "${dpi_col}%-14s${NC}\n" "${dpi_verdict}"
+        printf "%b%-14s%b\n" "${dpi_col}" "${dpi_verdict}" "${NC}"
     done
 
     trap - INT TERM
 
     echo ""
-    printf "  ${BOLD}Итог проверки:${NC} доступно ${GREEN}%s${NC} из ${BOLD}%s${NC} сервисов.\n" \
-        "${ok_hosts}" "${total_hosts}"
+    printf "  %bИтог проверки:%b доступно %b%s%b из %b%s%b сервисов.\n" \
+        "${BOLD}" "${NC}" "${GREEN}" "${ok_hosts}" "${NC}" "${BOLD}" "${total_hosts}" "${NC}"
 
     if [ "${ok_hosts}" -eq "${total_hosts}" ]; then
         tui_success "Все сервисы доступны без признаков блокировок!"
@@ -124,11 +124,11 @@ run_diagnostics() {
 
     echo ""
     tui_header "2. Пояснение DPI вердиктов"
-    printf "  ${GREEN}Clean${NC}        - соединение проходит без признаков вмешательства DPI.\n"
-    printf "  ${RED}Reset${NC}        - провайдер отправляет поддельный TCP RST при отправке ClientHello SNI.\n"
-    printf "  ${MAGENTA}Freeze${NC}       - пакет с именем хоста (SNI) молча сбрасывается ТСПУ/DPI (Drop).\n"
-    printf "  ${YELLOW}DNSError${NC}     - имя хоста не резолвится через DNS (включите DoH в меню 4).\n"
-    printf "  ${DGRAY}NoConnection${NC} - порт недоступен (блокировка по IP или сбой маршрутизации).\n"
+    printf "  %bClean%b        - соединение проходит без признаков вмешательства DPI.\n" "${GREEN}" "${NC}"
+    printf "  %bReset%b        - провайдер отправляет поддельный TCP RST при отправке ClientHello SNI.\n" "${RED}" "${NC}"
+    printf "  %bFreeze%b       - пакет с именем хоста (SNI) молча сбрасывается ТСПУ/DPI (Drop).\n" "${MAGENTA}" "${NC}"
+    printf "  %bDNSError%b     - имя хоста не резолвится через DNS (включите DoH в меню 6).\n" "${YELLOW}" "${NC}"
+    printf "  %bNoConnection%b - порт недоступен (блокировка по IP или сбой маршрутизации).\n" "${DGRAY}" "${NC}"
 
     tui_pause
 }
