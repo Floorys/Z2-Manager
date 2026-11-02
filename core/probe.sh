@@ -47,7 +47,12 @@ probe_dns_resolve() {
     local host="$1"
     local ip=""
     if command -v nslookup >/dev/null 2>&1; then
-        ip=$(nslookup "${host}" 2>/dev/null | grep -A1 "Name:" | grep "Address" | awk '{print $2}' | head -n1)
+        # BusyBox prints "Address 1: 1.2.3.4" while other implementations
+        # commonly print "Address: 1.2.3.4". In both cases the IP is last.
+        ip=$(nslookup "${host}" 2>/dev/null | awk '
+            /^Name:/ { answer = 1; next }
+            answer && /^Address/ { print $NF; exit }
+        ')
     fi
     if [ -z "${ip}" ] && command -v getent >/dev/null 2>&1; then
         ip=$(getent hosts "${host}" 2>/dev/null | awk '{print $1}')
@@ -68,52 +73,66 @@ probe_curl_request() {
     local extra_args="${4:-}"
     local max_t=$(( timeout + 1 ))
 
-    local hdr_file
+    z2m_prepare_runtime || return 1
+    local hdr_file body_file
     hdr_file=$(mktemp "${Z2M_TMP}/curl_hdr.XXXXXX")
+    body_file=$(mktemp "${Z2M_TMP}/curl_body.XXXXXX")
+    if [ -z "${hdr_file}" ] || [ -z "${body_file}" ]; then
+        rm -f "${hdr_file}" "${body_file}" 2>/dev/null
+        return 1
+    fi
 
     # Capture HTTP headers and status code
     local http_code
     if [ -n "${CURL_INTERFACE:-}" ]; then
         if [ -n "${extra_args}" ]; then
-            http_code=$(curl -s -k -I \
+            http_code=$(curl -sS -L \
+                --proto '=https' --proto-redir '=https' \
                 --connect-timeout "${timeout}" \
                 -m "${max_t}" \
                 -A "${BROWSER_UA}" \
                 --interface "${CURL_INTERFACE}" \
                 "${extra_args}" \
+                --range 0-8191 \
                 -D "${hdr_file}" \
-                -o /dev/null \
+                -o "${body_file}" \
                 -w "%{http_code}" \
                 "https://${host}:${port}/" 2>/dev/null)
         else
-            http_code=$(curl -s -k -I \
+            http_code=$(curl -sS -L \
+                --proto '=https' --proto-redir '=https' \
                 --connect-timeout "${timeout}" \
                 -m "${max_t}" \
                 -A "${BROWSER_UA}" \
                 --interface "${CURL_INTERFACE}" \
+                --range 0-8191 \
                 -D "${hdr_file}" \
-                -o /dev/null \
+                -o "${body_file}" \
                 -w "%{http_code}" \
                 "https://${host}:${port}/" 2>/dev/null)
         fi
     else
         if [ -n "${extra_args}" ]; then
-            http_code=$(curl -s -k -I \
+            http_code=$(curl -sS -L \
+                --proto '=https' --proto-redir '=https' \
                 --connect-timeout "${timeout}" \
                 -m "${max_t}" \
                 -A "${BROWSER_UA}" \
                 "${extra_args}" \
+                --range 0-8191 \
                 -D "${hdr_file}" \
-                -o /dev/null \
+                -o "${body_file}" \
                 -w "%{http_code}" \
                 "https://${host}:${port}/" 2>/dev/null)
         else
-            http_code=$(curl -s -k -I \
+            http_code=$(curl -sS -L \
+                --proto '=https' --proto-redir '=https' \
                 --connect-timeout "${timeout}" \
                 -m "${max_t}" \
                 -A "${BROWSER_UA}" \
+                --range 0-8191 \
                 -D "${hdr_file}" \
-                -o /dev/null \
+                -o "${body_file}" \
                 -w "%{http_code}" \
                 "https://${host}:${port}/" 2>/dev/null)
         fi
@@ -122,7 +141,7 @@ probe_curl_request() {
 
     # Separate curl exit code from HTTP code
     if [ "${curl_exit}" -ne 0 ]; then
-        rm -f "${hdr_file}" 2>/dev/null
+        rm -f "${hdr_file}" "${body_file}" 2>/dev/null
         return 1
     fi
 
@@ -132,15 +151,20 @@ probe_curl_request() {
         loc=$(grep -i "^Location:" "${hdr_file}" 2>/dev/null | tr -d '\r\n')
         if [ -n "${loc}" ]; then
             if echo "${loc}" | grep -q -i -E "${BLOCK_MARKERS}"; then
-                rm -f "${hdr_file}" 2>/dev/null
+                rm -f "${hdr_file}" "${body_file}" 2>/dev/null
                 return 1
             fi
         fi
     fi
-    rm -f "${hdr_file}" 2>/dev/null
+    # Some ISP block pages return HTTP 200 and do not redirect.
+    if [ -s "${body_file}" ] && grep -q -i -E "${BLOCK_MARKERS}" "${body_file}" 2>/dev/null; then
+        rm -f "${hdr_file}" "${body_file}" 2>/dev/null
+        return 1
+    fi
+    rm -f "${hdr_file}" "${body_file}" 2>/dev/null
 
     case "${http_code}" in
-        2*|3*|4*)
+        2*|3*|400|401|403|404|405|409|429)
             return 0
             ;;
         *)
@@ -150,7 +174,7 @@ probe_curl_request() {
 }
 
 # Fast TLS Handshake & HTTP Reachability Probe
-# Uses HEAD request (-I) with strict timeouts to eliminate router hangs
+# Uses a small ranged GET with strict timeouts so block-page bodies can be checked.
 probe_fast_tls() {
     local host="$1"
     local port="${2:-443}"
@@ -266,7 +290,9 @@ probe_dpi_verdict() {
     fi
 
     local err_file
+    z2m_prepare_runtime || { echo "NoConnection"; return 0; }
     err_file=$(mktemp "${Z2M_TMP}/curl_dpi_err.XXXXXX")
+    [ -n "${err_file}" ] || { echo "NoConnection"; return 0; }
 
     local intf_opt=""
     if [ -n "${CURL_INTERFACE:-}" ]; then
@@ -274,7 +300,7 @@ probe_dpi_verdict() {
     fi
 
     # shellcheck disable=SC2086
-    curl -s -k -o /dev/null -I --connect-timeout 2 -m 4 ${intf_opt} "https://${host}:${port}/" 2>"${err_file}"
+    curl -sS -o /dev/null -I --connect-timeout 2 -m 4 ${intf_opt} "https://${host}:${port}/" 2>"${err_file}"
     local code=$?
 
     if [ ${code} -eq 0 ]; then

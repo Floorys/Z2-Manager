@@ -41,18 +41,21 @@ run_strategy_generator() {
 
     # Synchronize required blobs and lists
     zapret_sync_fake_blobs
-    zapret_sync_hostlists
+    zapret_sync_hostlists 0
 
     # Backup current configuration BEFORE any modification
     local bak_file
-    bak_file=$(zapret_backup_config)
+    if ! bak_file=$(zapret_backup_config) || [ -z "${bak_file}" ] || [ ! -s "${bak_file}" ]; then
+        tui_error "Не удалось создать резервную копию конфигурации. Генератор отменён."
+        tui_pause
+        return 1
+    fi
     local interrupted=0
 
     cleanup_generator() {
         echo ""
         tui_warn "Прерывание генератора! Восстанавливаем исходную конфигурацию..."
         zapret_restore_config "${bak_file}"
-        rm -f "${bak_file}" 2>/dev/null
         trap - INT TERM HUP
         interrupted=1
     }
@@ -143,7 +146,14 @@ run_strategy_generator() {
         # Apply candidate as standalone test rule
         local test_opt
         test_opt=$(combo_build_single_test_args "${c_tls}")
-        zapret_set_opt "${test_opt}"
+        if ! zapret_set_opt "${test_opt}"; then
+            printf "%-4s %-32s %b%-12s%b %b%-12s%b %b\n" \
+                "${i}" "${short_name}" "${RED}" "Сбой" "${NC}" "${RED}" "Сбой" "${NC}" "${gw_safe}"
+            cand_scores_d="${cand_scores_d} ${i}:0"
+            cand_scores_y="${cand_scores_y} ${i}:0"
+            i=$(( i + 1 ))
+            continue
+        fi
 
         if [ "${interrupted}" -eq 1 ]; then
             tui_pause
@@ -297,7 +307,10 @@ run_strategy_generator() {
 
             local combo_args
             combo_args=$(combo_build_args "${d_tls}" "${y_tls}" "${d_tls}")
-            zapret_set_opt "${combo_args}"
+            if ! zapret_set_opt "${combo_args}"; then
+                tui_warn "Не удалось применить сочетание; пропускаем его."
+                continue
+            fi
 
             if [ "${interrupted}" -eq 1 ]; then
                 tui_pause
@@ -392,7 +405,6 @@ run_strategy_generator() {
         tui_error "Ни одна стратегия не смогла обеспечить доступ к тестируемым ресурсам!"
         tui_warn "Восстанавливаем исходную конфигурацию роутера..."
         zapret_restore_config "${bak_file}"
-        rm -f "${bak_file}" 2>/dev/null
         trap - INT TERM HUP
         tui_info "Рекомендация: проверьте блокировку провайдером DNS (DoH в меню 6)."
         tui_pause
@@ -412,7 +424,6 @@ run_strategy_generator() {
             *)
                 tui_info "Откатываемся к исходной конфигурации (baseline)..."
                 zapret_restore_config "${bak_file}"
-                rm -f "${bak_file}" 2>/dev/null
                 trap - INT TERM HUP
                 tui_pause
                 return 0
@@ -429,7 +440,13 @@ run_strategy_generator() {
 
     local final_opt
     final_opt=$(combo_build_args "${win_d_tls}" "${win_y_tls}" "${win_d_tls}")
-    zapret_set_opt "${final_opt}"
+    if ! zapret_set_opt "${final_opt}"; then
+        tui_error "Не удалось применить итоговую стратегию. Выполняется откат."
+        zapret_restore_config "${bak_file}"
+        trap - INT TERM HUP
+        tui_pause
+        return 1
+    fi
 
     # Remove temporary backup and clear trap
     rm -f "${bak_file}" 2>/dev/null

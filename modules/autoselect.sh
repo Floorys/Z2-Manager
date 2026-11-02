@@ -34,18 +34,21 @@ run_strategy_autoselect() {
 
     # Ensure required blobs and lists are in place
     zapret_sync_fake_blobs
-    zapret_sync_hostlists
+    zapret_sync_hostlists 0
 
     # Backup current configuration BEFORE any modification
     local bak_file
-    bak_file=$(zapret_backup_config)
+    if ! bak_file=$(zapret_backup_config) || [ -z "${bak_file}" ] || [ ! -s "${bak_file}" ]; then
+        tui_error "Не удалось создать резервную копию конфигурации. Подбор отменён."
+        tui_pause
+        return 1
+    fi
     local interrupted=0
 
     cleanup_autoselect() {
         echo ""
         tui_warn "Прерывание! Восстанавливаем исходную конфигурацию..."
         zapret_restore_config "${bak_file}"
-        rm -f "${bak_file}" 2>/dev/null
         trap - INT TERM HUP
         interrupted=1
     }
@@ -79,7 +82,11 @@ run_strategy_autoselect() {
             "${short_name}" "${YELLOW}" "..." "${NC}" "${DGRAY}" "..." "${NC}" "${YELLOW}" "${NC}"
 
         # Apply candidate strategy (zapret_set_opt includes restart and 2s pause)
-        zapret_set_opt "${opt}"
+        if ! zapret_set_opt "${opt}"; then
+            tui_print_result_row "${name}" "0" "5" "5"
+            i=$(( i + 1 ))
+            continue
+        fi
 
         if [ "${interrupted}" -eq 1 ]; then
             tui_pause
@@ -147,7 +154,6 @@ run_strategy_autoselect() {
         tui_error "Ни одна стратегия из каталога не прошла проверки доступности!"
         tui_warn "Восстанавливаем исходную конфигурацию..."
         zapret_restore_config "${bak_file}"
-        rm -f "${bak_file}" 2>/dev/null
         trap - INT TERM HUP
         tui_info "Рекомендация: проверьте DNS (DoH в меню 6) или запустите полный генератор (z2m -g)."
         tui_pause
@@ -160,7 +166,13 @@ run_strategy_autoselect() {
     win_tagline=$(catalog_get_tagline "${best_idx}")
     win_opt=$(catalog_get_opt "${best_idx}")
 
-    zapret_set_opt "${win_opt}"
+    if ! zapret_set_opt "${win_opt}"; then
+        tui_error "Не удалось применить победившую стратегию. Восстанавливаем исходную конфигурацию."
+        zapret_restore_config "${bak_file}"
+        trap - INT TERM HUP
+        tui_pause
+        return 1
+    fi
 
     # Remove temporary backup and clear trap
     rm -f "${bak_file}" 2>/dev/null
@@ -191,14 +203,17 @@ run_test_youtube_only() {
     fi
 
     local bak_file
-    bak_file=$(zapret_backup_config)
+    if ! bak_file=$(zapret_backup_config) || [ -z "${bak_file}" ] || [ ! -s "${bak_file}" ]; then
+        tui_error "Не удалось создать резервную копию конфигурации. Тест отменён."
+        tui_pause
+        return 1
+    fi
     local interrupted=0
 
     cleanup_yt() {
         echo ""
         tui_warn "Прерывание! Восстанавливаем исходную конфигурацию..."
         zapret_restore_config "${bak_file}"
-        rm -f "${bak_file}" 2>/dev/null
         trap - INT TERM HUP
         interrupted=1
     }
@@ -225,7 +240,11 @@ run_test_youtube_only() {
         printf "%-36s %b%-10s%b %b%-10s%b %b⏳ Тест...%b\r" \
             "${short_name}" "${YELLOW}" "..." "${NC}" "${DGRAY}" "..." "${NC}" "${YELLOW}" "${NC}"
 
-        zapret_set_opt "${opt}"
+        if ! zapret_set_opt "${opt}"; then
+            tui_print_result_row "${name}" "0" "3" "3"
+            i=$(( i + 1 ))
+            continue
+        fi
 
         if [ "${interrupted}" -eq 1 ]; then
             tui_pause
@@ -281,7 +300,6 @@ run_test_youtube_only() {
     if [ "${best_score}" -le 0 ]; then
         tui_error "Ни одна стратегия для YouTube не сработала!"
         zapret_restore_config "${bak_file}"
-        rm -f "${bak_file}" 2>/dev/null
         trap - INT TERM HUP
         tui_pause
         return 1
@@ -290,7 +308,13 @@ run_test_youtube_only() {
     local win_name win_opt
     win_name=$(catalog_get_name "${best_idx}")
     win_opt=$(catalog_get_opt "${best_idx}")
-    zapret_set_opt "${win_opt}"
+    if ! zapret_set_opt "${win_opt}"; then
+        tui_error "Не удалось применить победившую стратегию. Выполняется откат."
+        zapret_restore_config "${bak_file}"
+        trap - INT TERM HUP
+        tui_pause
+        return 1
+    fi
     rm -f "${bak_file}" 2>/dev/null
     trap - INT TERM HUP
 
@@ -312,14 +336,17 @@ run_test_discord_only() {
     fi
 
     local bak_file
-    bak_file=$(zapret_backup_config)
+    if ! bak_file=$(zapret_backup_config) || [ -z "${bak_file}" ] || [ ! -s "${bak_file}" ]; then
+        tui_error "Не удалось создать резервную копию конфигурации. Тест отменён."
+        tui_pause
+        return 1
+    fi
     local interrupted=0
 
     cleanup_dc() {
         echo ""
         tui_warn "Прерывание! Восстанавливаем исходную конфигурацию..."
         zapret_restore_config "${bak_file}"
-        rm -f "${bak_file}" 2>/dev/null
         trap - INT TERM HUP
         interrupted=1
     }
@@ -346,7 +373,11 @@ run_test_discord_only() {
         printf "%-36s %b%-10s%b %b%-10s%b %b⏳ Тест...%b\r" \
             "${short_name}" "${YELLOW}" "..." "${NC}" "${DGRAY}" "..." "${NC}" "${YELLOW}" "${NC}"
 
-        zapret_set_opt "${opt}"
+        if ! zapret_set_opt "${opt}"; then
+            tui_print_result_row "${name}" "0" "3" "3"
+            i=$(( i + 1 ))
+            continue
+        fi
 
         if [ "${interrupted}" -eq 1 ]; then
             tui_pause
@@ -402,7 +433,6 @@ run_test_discord_only() {
     if [ "${best_score}" -le 0 ]; then
         tui_error "Ни одна стратегия для Discord не сработала!"
         zapret_restore_config "${bak_file}"
-        rm -f "${bak_file}" 2>/dev/null
         trap - INT TERM HUP
         tui_pause
         return 1
@@ -411,7 +441,13 @@ run_test_discord_only() {
     local win_name win_opt
     win_name=$(catalog_get_name "${best_idx}")
     win_opt=$(catalog_get_opt "${best_idx}")
-    zapret_set_opt "${win_opt}"
+    if ! zapret_set_opt "${win_opt}"; then
+        tui_error "Не удалось применить победившую стратегию. Выполняется откат."
+        zapret_restore_config "${bak_file}"
+        trap - INT TERM HUP
+        tui_pause
+        return 1
+    fi
     rm -f "${bak_file}" 2>/dev/null
     trap - INT TERM HUP
 

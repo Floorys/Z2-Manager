@@ -53,6 +53,7 @@ tui_step() {
 }
 
 tui_pause() {
+    [ "${Z2M_NONINTERACTIVE:-0}" = "1" ] && return 0
     printf "\n%bНажмите [Enter] для продолжения...%b " "${DGRAY}" "${NC}" >&2
     # shellcheck disable=SC2034
     read -r dummy </dev/tty 2>/dev/null || read -r dummy
@@ -62,6 +63,11 @@ tui_prompt() {
     local prompt_text="$1"
     local default_val="$2"
     local user_val=""
+
+    if [ "${Z2M_NONINTERACTIVE:-0}" = "1" ]; then
+        echo "${default_val}"
+        return 0
+    fi
 
     if [ -n "${default_val}" ]; then
         printf "%b %b[%s]%b: " "${prompt_text}" "${DGRAY}" "${default_val}" "${NC}" >&2

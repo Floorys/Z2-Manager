@@ -4,12 +4,21 @@
 # Based on Asterlike/zapret2UI and 1andrevich/zapret2-openwrt
 # ==============================================================================
 
-# Task 10: Root check for modifying network and system configuration
-if [ "$1" != "--help" ] && [ "$1" != "-h" ] && [ "$(id -u 2>/dev/null)" -ne 0 ]; then
-    printf "Ошибка: Zapret2-Manager требует прав root (суперпользователя)!\n" >&2
-    printf "Запустите команду через sudo или войдите под учетной записью root.\n" >&2
-    exit 1
-fi
+# Root is required only for commands that can modify system configuration.
+case "${1:-}" in
+    --help|-h|--status|-s|--diagnostics|-d|--check-update|-c|-cu)
+        ;;
+    ''|--autoselect|-a|--generate|-g|--youtube|-yt|--discord|-dc|\
+    --discord-voice|-dv|--voice|--ports|-p|--restart|-r|\
+    --update-zapret|-uz|--update-all|-ua|--update|-u)
+        if [ "$(id -u 2>/dev/null)" != "0" ]; then
+            printf "Ошибка: эта операция Zapret2-Manager требует прав root!\n" >&2
+            printf "Запустите команду через sudo или войдите под учетной записью root.\n" >&2
+            exit 1
+        fi
+        ;;
+    *) ;;
+esac
 
 # Task 3: Robust determination of Z2M_DIR resolving symlinks (e.g. /usr/bin/z2m)
 TARGET="$0"
@@ -75,7 +84,7 @@ z2m_bootstrap() {
     zapret_repair_config
 
     # Check all fake blobs from fake/ directory rather than just one single file
-    local missing_blob=0
+    local missing_blob=0 missing_list=0
     if [ -d "${Z2M_DIR}/fake" ] && [ -d "${ZAPRET2_DIR}" ]; then
         for blob_file in "${Z2M_DIR}/fake/"*.bin; do
             [ -f "${blob_file}" ] || continue
@@ -88,8 +97,18 @@ z2m_bootstrap() {
         done
         if [ "${missing_blob}" -eq 1 ]; then
             zapret_sync_fake_blobs
-            zapret_sync_hostlists
         fi
+    fi
+
+    if [ -d "${Z2M_DIR}/lists" ] && [ -d "${ZAPRET2_DIR}" ]; then
+        for list_file in "${Z2M_DIR}/lists/"*.txt; do
+            [ -f "${list_file}" ] || continue
+            if [ ! -f "${ZAPRET2_IPSET_DIR}/${list_file##*/}" ]; then
+                missing_list=1
+                break
+            fi
+        done
+        [ "${missing_list}" -eq 1 ] && zapret_sync_hostlists
     fi
 }
 
@@ -280,8 +299,11 @@ manual_catalog_menu() {
                 chosen_name=$(catalog_get_name "${sel}")
                 chosen_opt=$(catalog_get_opt "${sel}")
                 tui_info "Применяем стратегию: «${chosen_name}»..."
-                zapret_set_opt "${chosen_opt}"
-                tui_success "Стратегия успешно применена!"
+                if zapret_set_opt "${chosen_opt}"; then
+                    tui_success "Стратегия успешно применена!"
+                else
+                    tui_error "Не удалось применить стратегию или перезапустить Zapret2."
+                fi
                 tui_pause
             else
                 tui_warn "Номер вне диапазона (1-${CATALOG_COUNT})."
@@ -413,68 +435,74 @@ main_menu() {
 # Task 2: Mutating operations bootstrap when called; query/status operations have ZERO side-effects
 case "$1" in
     --autoselect|-a)
+        Z2M_NONINTERACTIVE=1; export Z2M_NONINTERACTIVE
         z2m_bootstrap
         run_strategy_autoselect
-        exit 0
+        exit $?
         ;;
     --generate|-g)
+        Z2M_NONINTERACTIVE=1; export Z2M_NONINTERACTIVE
         z2m_bootstrap
         run_strategy_generator
-        exit 0
+        exit $?
         ;;
     --youtube|-yt)
+        Z2M_NONINTERACTIVE=1; export Z2M_NONINTERACTIVE
         z2m_bootstrap
         run_test_youtube_only
-        exit 0
+        exit $?
         ;;
     --discord|-dc)
+        Z2M_NONINTERACTIVE=1; export Z2M_NONINTERACTIVE
         z2m_bootstrap
         run_test_discord_only
-        exit 0
+        exit $?
         ;;
     --discord-voice|-dv|--voice)
+        Z2M_NONINTERACTIVE=1; export Z2M_NONINTERACTIVE
         z2m_bootstrap
         discord_fix_apply
-        exit 0
+        exit $?
         ;;
     --ports|-p)
         z2m_bootstrap
         run_ports_menu
-        exit 0
+        exit $?
         ;;
     --diagnostics|-d)
+        Z2M_NONINTERACTIVE=1; export Z2M_NONINTERACTIVE
         # Task 2: No bootstrap, zero side-effects
         run_diagnostics
-        exit 0
+        exit $?
         ;;
     --restart|-r)
         zapret_restart
-        exit 0
+        exit $?
         ;;
     --status|-s)
         # Task 2: No bootstrap, zero side-effects
         zapret_status
-        exit 0
+        exit $?
         ;;
     --update-zapret|-uz)
         z2m_bootstrap
-        zapret_run_update "" "1" "1"
-        exit 0
+        zapret_run_update "" "0" "1"
+        exit $?
         ;;
     --check-update|-c|-cu)
         # Task 2: No bootstrap, zero side-effects
         run_check_updates_cli
-        exit 0
+        exit $?
         ;;
     --update-all|-ua)
         z2m_bootstrap
         run_update_all
-        exit 0
+        exit $?
         ;;
     --update|-u)
         z2m_bootstrap
         run_updates_menu
-        exit 0
+        exit $?
         ;;
     --help|-h)
         # Task 2 & 6: Aligned with README.md and all CLI flags
@@ -496,7 +524,12 @@ case "$1" in
         printf "  z2m -s  | --status               Вывод статуса службы (running/stopped)\n"
         exit 0
         ;;
-    *)
+    '')
         main_menu
+        ;;
+    *)
+        printf "Ошибка: неизвестный аргумент: %s\n" "$1" >&2
+        printf "Используйте 'z2m --help' для просмотра доступных команд.\n" >&2
+        exit 2
         ;;
 esac

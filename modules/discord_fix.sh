@@ -150,10 +150,14 @@ EOF
     zapret_ensure_full_ports
 
     tui_info "4. Синхронизация списков доменов Discord..."
-    zapret_sync_hostlists
+    zapret_sync_hostlists 0
 
     tui_info "5. Перезапуск службы zapret2..."
-    zapret_restart
+    if ! zapret_restart; then
+        tui_error "Скрипт записан, но службу Zapret2 не удалось перезапустить."
+        tui_pause
+        return 1
+    fi
 
     sleep 1
 
@@ -167,7 +171,9 @@ EOF
         tui_info "Теперь десинкятся как STUN пакеты, так и Discord IP Discovery (UDP 82)."
         tui_info "Голосовые каналы и звонки подключаются мгновенно!"
     else
-        tui_warn "Скрипт установлен (${new_st}). Проверьте запуск службы zapret2 в меню 1."
+        tui_error "Скрипт установлен, но исправление не активно (${new_st})."
+        tui_pause
+        return 1
     fi
 
     tui_pause
@@ -183,8 +189,13 @@ discord_fix_remove() {
     fi
 
     tui_info "Перезапуск zapret2..."
-    zapret_restart
-    tui_success "Исправление отключено."
+    if zapret_restart; then
+        tui_success "Исправление отключено."
+    else
+        tui_error "Файл удалён, но Zapret2 не удалось перезапустить."
+        tui_pause
+        return 1
+    fi
     tui_pause
 }
 

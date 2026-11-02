@@ -27,9 +27,11 @@ export Z2M_DIR
 #   1 : v1 > v2
 #   2 : v1 < v2
 vercmp() {
-    local v1 v2
-    v1=$(echo "$1" | sed 's/^v//')
-    v2=$(echo "$2" | sed 's/^v//')
+    local v1 v2 suffix1 suffix2
+    # OpenWrt package revisions (-rN) do not change the upstream application
+    # version and therefore compare equal to the corresponding release tag.
+    v1=$(echo "$1" | sed 's/^v//; s/-r[0-9][0-9]*$//')
+    v2=$(echo "$2" | sed 's/^v//; s/-r[0-9][0-9]*$//')
     [ "$v1" = "$v2" ] && return 0
 
     local i=1
@@ -38,7 +40,7 @@ vercmp() {
         p1=$(echo "$v1" | cut -d. -f"$i")
         p2=$(echo "$v2" | cut -d. -f"$i")
 
-        [ -z "$p1" ] && [ -z "$p2" ] && return 0
+        [ -z "$p1" ] && [ -z "$p2" ] && break
         [ -z "$p1" ] && p1=0
         [ -z "$p2" ] && p2=0
 
@@ -54,7 +56,16 @@ vercmp() {
         fi
         i=$(( i + 1 ))
     done
-    return 0
+    suffix1=$(echo "${v1}" | sed 's/^[0-9.]*//')
+    suffix2=$(echo "${v2}" | sed 's/^[0-9.]*//')
+    [ "${suffix1}" = "${suffix2}" ] && return 0
+    [ -z "${suffix1}" ] && return 1
+    [ -z "${suffix2}" ] && return 2
+
+    if [ "$(printf '%s\n%s\n' "${suffix1}" "${suffix2}" | LC_ALL=C sort | head -n1)" = "${suffix1}" ]; then
+        return 2
+    fi
+    return 1
 }
 
 # Fetch latest Zapret2 release tag from GitHub (1andrevich/zapret2-openwrt)
@@ -64,7 +75,7 @@ zapret_get_latest_version() {
 
     # 1. Try redirect location from GitHub web releases/latest (avoids GitHub API 60 req/hr limits)
     if command -v curl >/dev/null 2>&1; then
-        tag=$(curl -sI -k --connect-timeout 5 -m 10 "https://github.com/${repo}/releases/latest" 2>/dev/null | grep -i "^location:" | sed 's/.*tag\///' | tr -d '\r\n ')
+        tag=$(curl -fsSI --proto '=https' --proto-redir '=https' --connect-timeout 5 -m 10 "https://github.com/${repo}/releases/latest" 2>/dev/null | grep -i "^location:" | sed 's/.*tag\///' | tr -d '\r\n ')
     fi
     if [ -z "${tag}" ] && command -v wget >/dev/null 2>&1; then
         tag=$(wget -S --spider --timeout=10 "https://github.com/${repo}/releases/latest" 2>&1 | grep -i "location:" | sed 's/.*tag\///' | tr -d '\r\n ')
@@ -73,7 +84,7 @@ zapret_get_latest_version() {
     # 2. Fallback to GitHub REST API
     if [ -z "${tag}" ]; then
         if command -v curl >/dev/null 2>&1; then
-            tag=$(curl -sSL -k --connect-timeout 5 -m 10 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n1 | cut -d: -f2 | tr -d ' ",\r\n')
+            tag=$(curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 5 -m 10 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n1 | cut -d: -f2 | tr -d ' ",\r\n')
         elif command -v wget >/dev/null 2>&1; then
             tag=$(wget -qO- --timeout=10 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n1 | cut -d: -f2 | tr -d ' ",\r\n')
         fi
@@ -170,12 +181,21 @@ updater_download() {
     local url="$1"
     local dest="$2"
 
-    rm -f "${dest}" 2>/dev/null
+    local part="${dest}.part.$$"
+    rm -f "${dest}" "${part}" 2>/dev/null
     if command -v curl >/dev/null 2>&1; then
-        curl -sSL -k --connect-timeout 8 -m 60 "${url}" -o "${dest}" 2>/dev/null
+        if curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 8 -m 60 "${url}" -o "${part}" 2>/dev/null; then
+            mv -f "${part}" "${dest}"
+        else
+            rm -f "${part}" 2>/dev/null
+        fi
     fi
     if [ ! -s "${dest}" ] && command -v wget >/dev/null 2>&1; then
-        wget -q --timeout=30 -O "${dest}" "${url}" 2>/dev/null
+        if wget -q --timeout=30 -O "${part}" "${url}" 2>/dev/null; then
+            mv -f "${part}" "${dest}"
+        else
+            rm -f "${part}" 2>/dev/null
+        fi
     fi
     [ -s "${dest}" ]
 }
@@ -240,8 +260,26 @@ zapret_run_update() {
     printf "%bℹ Архитектура устройства: %b%s%b | Менеджер: %b%s%b%b\n" \
         "${CYAN}" "${GREEN}" "${SYSTEM_ARCH}" "${NC}" "${GREEN}" "${SYSTEM_PKG_MGR}" "${NC}" "${NC}"
 
+    z2m_prepare_runtime || return 1
     local tmp_dir
-    tmp_dir=$(mktemp -d "${Z2M_TMP}/zapret2_update.XXXXXX")
+    tmp_dir=$(mktemp -d "${Z2M_TMP}/zapret2_update.XXXXXX") || {
+        tui_error "Не удалось создать временный каталог обновления."
+        return 1
+    }
+
+    local service_was_running=0 service_was_enabled=0
+    zapret_is_running && service_was_running=1
+    [ -x "${ZAPRET2_INIT}" ] && "${ZAPRET2_INIT}" enabled >/dev/null 2>&1 && service_was_enabled=1
+    cleanup_zapret_update() {
+        rm -rf "${tmp_dir}" 2>/dev/null
+    }
+    abort_zapret_update() {
+        cleanup_zapret_update
+        [ "${service_was_running}" -eq 1 ] && zapret_start >/dev/null 2>&1
+        trap - INT TERM
+        exit 130
+    }
+    trap abort_zapret_update INT TERM
 
     local repo="${ZAPRET2_UPSTREAM_REPO:-1andrevich/zapret2-openwrt}"
     local tag_clean="${target_ver#v}"
@@ -270,7 +308,8 @@ zapret_run_update() {
 
     if [ -z "${pkg_downloaded}" ] || [ ! -s "${pkg_downloaded}" ]; then
         tui_error "Не удалось скачать пакет Zapret2 для архитектуры ${SYSTEM_ARCH}."
-        rm -rf "${tmp_dir}" 2>/dev/null
+        cleanup_zapret_update
+        trap - INT TERM
         [ "${non_interactive}" != "1" ] && tui_pause
         return 1
     fi
@@ -285,61 +324,123 @@ zapret_run_update() {
 
     # Остановка текущей службы перед установкой
     tui_info "Остановка службы Zapret2 перед обновлением бинарных файлов..."
-    zapret_stop
+    if [ "${service_was_running}" -eq 1 ] && ! zapret_stop; then
+        tui_error "Не удалось остановить Zapret2 перед обновлением."
+        cleanup_zapret_update
+        trap - INT TERM
+        return 1
+    fi
 
     tui_info "Установка пакета через ${SYSTEM_PKG_MGR}..."
     if [ "${SYSTEM_PKG_MGR}" = "apk" ]; then
         mkdir -p /etc/apk/keys 2>/dev/null
         local key_url="https://github.com/${repo}/releases/download/${tag_with_v}/zapret2-1andrevich.pub"
-        updater_download "${key_url}" "/etc/apk/keys/zapret2-1andrevich.pub" 2>/dev/null
+        local key_file="${tmp_dir}/zapret2-1andrevich.pub"
+        if updater_download "${key_url}" "${key_file}"; then
+            cp -f "${key_file}" /etc/apk/keys/zapret2-1andrevich.pub
+            chmod 644 /etc/apk/keys/zapret2-1andrevich.pub 2>/dev/null
+        elif [ ! -s /etc/apk/keys/zapret2-1andrevich.pub ]; then
+            tui_error "Не удалось получить ключ подписи APK. Обновление отменено."
+            [ "${service_was_running}" -eq 1 ] && zapret_start >/dev/null 2>&1
+            cleanup_zapret_update
+            trap - INT TERM
+            return 1
+        fi
 
         if [ -s "${luci_pkg}" ]; then
-            apk add --allow-untrusted --upgrade --force-non-repository "${pkg_downloaded}" "${luci_pkg}"
+            if ! apk add --upgrade --force-non-repository "${pkg_downloaded}" "${luci_pkg}"; then
+                tui_error "apk не смог установить пакет Zapret2."
+                [ "${service_was_running}" -eq 1 ] && zapret_start >/dev/null 2>&1
+                cleanup_zapret_update; trap - INT TERM; return 1
+            fi
         else
-            apk add --allow-untrusted --upgrade --force-non-repository "${pkg_downloaded}"
+            if ! apk add --upgrade --force-non-repository "${pkg_downloaded}"; then
+                tui_error "apk не смог установить пакет Zapret2."
+                [ "${service_was_running}" -eq 1 ] && zapret_start >/dev/null 2>&1
+                cleanup_zapret_update; trap - INT TERM; return 1
+            fi
         fi
     else
         # opkg
         opkg update >/dev/null 2>&1
         if [ -s "${luci_pkg}" ]; then
-            opkg install --force-reinstall "${pkg_downloaded}" "${luci_pkg}"
+            if ! opkg install --force-reinstall "${pkg_downloaded}" "${luci_pkg}"; then
+                tui_error "opkg не смог установить пакет Zapret2."
+                [ "${service_was_running}" -eq 1 ] && zapret_start >/dev/null 2>&1
+                cleanup_zapret_update; trap - INT TERM; return 1
+            fi
         else
-            opkg install --force-reinstall "${pkg_downloaded}"
+            if ! opkg install --force-reinstall "${pkg_downloaded}"; then
+                tui_error "opkg не смог установить пакет Zapret2."
+                [ "${service_was_running}" -eq 1 ] && zapret_start >/dev/null 2>&1
+                cleanup_zapret_update; trap - INT TERM; return 1
+            fi
         fi
     fi
 
     # Восстановление интеграций Zapret2-Manager
     tui_info "Синхронизация компонентов и скриптов Zapret2-Manager..."
     zapret_sync_fake_blobs
-    zapret_sync_hostlists
-    zapret_sync_custom_scripts
+    zapret_sync_hostlists 0
     zapret_repair_config
 
     if [ -f "${ZAPRET2_SYNC}" ]; then
         "${ZAPRET2_SYNC}" >/dev/null 2>&1
     fi
     if [ -f "${ZAPRET2_INIT}" ]; then
-        "${ZAPRET2_INIT}" enable >/dev/null 2>&1
+        if [ "${service_was_enabled}" -eq 1 ]; then
+            "${ZAPRET2_INIT}" enable >/dev/null 2>&1
+        else
+            "${ZAPRET2_INIT}" disable >/dev/null 2>&1
+        fi
     fi
 
-    tui_info "Запуск обновленной службы Zapret2..."
-    zapret_restart
+    if [ "${service_was_running}" -eq 1 ]; then
+        tui_info "Запуск обновленной службы Zapret2..."
+        if ! zapret_restart; then
+            tui_error "Пакет установлен, но обновлённую службу не удалось запустить."
+            cleanup_zapret_update
+            trap - INT TERM
+            return 1
+        fi
+    else
+        if zapret_is_running && ! zapret_stop; then
+            tui_error "Не удалось восстановить остановленное состояние службы после обновления."
+            cleanup_zapret_update
+            trap - INT TERM
+            return 1
+        fi
+        tui_info "До обновления служба была остановлена; её состояние сохранено."
+    fi
 
-    rm -rf "${tmp_dir}" 2>/dev/null
+    cleanup_zapret_update
+    trap - INT TERM
 
     local new_installed_ver
     new_installed_ver=$(zapret_get_installed_version)
+    if [ -z "${new_installed_ver}" ]; then
+        tui_error "Пакетный менеджер завершился без ошибки, но версия Zapret2 не определяется."
+        return 1
+    fi
+    vercmp "${new_installed_ver}" "${target_ver}"
+    local installed_cmp=$?
+    if [ "${installed_cmp}" -ne 0 ]; then
+        tui_error "После установки обнаружена версия v${new_installed_ver}, ожидалась v${target_ver}."
+        return 1
+    fi
 
     echo ""
-    if zapret_is_running; then
+    if [ "${service_was_running}" -eq 1 ] && zapret_is_running; then
         local new_pid
         new_pid=$(pidof nfqws2 2>/dev/null || pgrep nfqws2 2>/dev/null || pidof nfqws 2>/dev/null)
         printf "%b✔ Zapret2 успешно обновлен до версии %bv%s%b!%b\n" \
             "${GREEN}" "${GREEN}" "${new_installed_ver:-${target_ver}}" "${NC}" "${NC}"
         tui_info "Служба запущена и перехватывает трафик (PID: ${new_pid})."
+    elif [ "${service_was_running}" -eq 0 ]; then
+        tui_success "Zapret2 обновлён до v${new_installed_ver:-${target_ver}}; служба оставлена остановленной."
     else
-        tui_warn "Пакет Zapret2 установлен (v${new_installed_ver:-${target_ver}}), но процесс nfqws2 еще не запущен."
-        tui_info "Проверьте запуск через 'z2m -r' или '/etc/init.d/zapret2 restart'."
+        tui_error "Пакет установлен, но процесс nfqws2 не запущен."
+        return 1
     fi
 
     [ "${non_interactive}" != "1" ] && tui_pause
@@ -353,19 +454,18 @@ run_self_update() {
     tui_info "Загрузка актуальной версии из репозитория ${Z2M_GITHUB_REPO:-Floorys/Z2-Manager}..."
 
     local update_url="https://github.com/${Z2M_GITHUB_REPO:-Floorys/Z2-Manager}/archive/refs/heads/main.tar.gz"
+    z2m_prepare_runtime || return 1
     local tmp_tar
     tmp_tar=$(mktemp "${Z2M_TMP}/z2m_update.XXXXXX.tar.gz")
     local tmp_dir
     tmp_dir=$(mktemp -d "${Z2M_TMP}/z2m_extracted.XXXXXX")
-
-    if command -v curl >/dev/null 2>&1; then
-        curl -sSL -k --connect-timeout 8 -m 30 "${update_url}" -o "${tmp_tar}" 2>/dev/null
-    fi
-    if [ ! -s "${tmp_tar}" ] && command -v wget >/dev/null 2>&1; then
-        wget -q --timeout=15 -O "${tmp_tar}" "${update_url}" 2>/dev/null
+    if [ -z "${tmp_tar}" ] || [ -z "${tmp_dir}" ]; then
+        tui_error "Не удалось создать временные файлы обновления."
+        rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+        return 1
     fi
 
-    if [ ! -s "${tmp_tar}" ]; then
+    if ! updater_download "${update_url}" "${tmp_tar}"; then
         tui_error "Не удалось скачать архив обновления. Проверьте соединение с интернетом."
         rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
         tui_pause
@@ -389,45 +489,114 @@ run_self_update() {
         return 1
     fi
 
-    tui_info "Установка файлов в /opt/zapret2-manager..."
-    mkdir -p /opt/zapret2-manager
-    cp -rf "${src_folder}"/* /opt/zapret2-manager/
-    find /opt/zapret2-manager -name "*.sh" -exec sed -i 's/\r$//' {} + 2>/dev/null
-    chmod +x /opt/zapret2-manager/*.sh 2>/dev/null
-    chmod +x /opt/zapret2-manager/core/*.sh 2>/dev/null
-    chmod +x /opt/zapret2-manager/modules/*.sh 2>/dev/null
-    chmod +x /opt/zapret2-manager/strategies/*.sh 2>/dev/null
-    chmod +x /opt/zapret2-manager/templates/*.sh 2>/dev/null
-
-    # Обновление команд z2m и zsm
-    cat << 'EOF' > /usr/bin/z2m
-#!/bin/sh
-exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
-EOF
-    chmod +x /usr/bin/z2m 2>/dev/null
-
-    cat << 'EOF' > /usr/bin/zsm
-#!/bin/sh
-exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
-EOF
-    chmod +x /usr/bin/zsm 2>/dev/null
-
-    # Синхронизация блобов, списков и фикса Discord Voice
-    zapret_sync_fake_blobs
-    zapret_sync_hostlists
-    if [ -f /opt/zapret2-manager/templates/50-script.sh ] && [ -d /opt/zapret2 ]; then
-        mkdir -p /opt/zapret2/init.d/openwrt/custom.d 2>/dev/null
-        cp -f /opt/zapret2-manager/templates/50-script.sh /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
-        chmod 755 /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
-        if command -v uci >/dev/null 2>&1; then
-            uci set zapret2.config.DISABLE_CUSTOM='0'
-            uci set zapret2.config.NFQWS2_PORTS_TCP="${DEFAULT_PORTS_TCP}"
-            uci set zapret2.config.NFQWS2_PORTS_UDP="${DEFAULT_PORTS_UDP}"
-            uci commit zapret2 2>/dev/null
+    # Never replace the running installation with syntactically broken scripts.
+    local script_list="${tmp_dir}/scripts.list" syntax_failed=0
+    find "${src_folder}" -type f -name '*.sh' > "${script_list}" 2>/dev/null
+    while IFS= read -r script_file; do
+        if ! sh -n "${script_file}"; then
+            tui_error "Загруженное обновление содержит ошибку синтаксиса: ${script_file##*/}"
+            syntax_failed=1
+            break
         fi
+    done < "${script_list}"
+    if [ "${syntax_failed}" -eq 1 ]; then
+        rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+        return 1
     fi
 
-    rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+    tui_info "Установка файлов в /opt/zapret2-manager..."
+    local stage_dir="/opt/zapret2-manager.new.$$"
+    local old_dir="/opt/zapret2-manager.old.$$"
+    local swap_complete=0
+    rollback_self_update() {
+        if [ -d "${old_dir}" ]; then
+            rm -rf /opt/zapret2-manager 2>/dev/null
+            mv "${old_dir}" /opt/zapret2-manager 2>/dev/null
+        elif [ "${swap_complete}" -eq 1 ]; then
+            rm -rf /opt/zapret2-manager 2>/dev/null
+        fi
+        rm -rf "${stage_dir}" "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+        trap - INT TERM
+    }
+    abort_self_update() {
+        if [ "${swap_complete}" -eq 0 ]; then
+            rollback_self_update
+        else
+            rm -rf "${old_dir}" "${stage_dir}" "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+            trap - INT TERM
+        fi
+        exit 130
+    }
+    trap abort_self_update INT TERM
+    rm -rf "${stage_dir}" "${old_dir}" 2>/dev/null
+    if ! mkdir -p "${stage_dir}"; then
+        tui_error "Не удалось создать staging-каталог."
+        trap - INT TERM
+        rm -rf "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+        return 1
+    fi
+    if ! cp -rf "${src_folder}/." "${stage_dir}/"; then
+        tui_error "Не удалось скопировать файлы обновления."
+        rm -rf "${stage_dir}" "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+        trap - INT TERM
+        return 1
+    fi
+    find "${stage_dir}" -name "*.sh" -exec sed -i 's/\r$//' {} + 2>/dev/null
+    chmod +x "${stage_dir}"/*.sh "${stage_dir}"/core/*.sh "${stage_dir}"/modules/*.sh \
+        "${stage_dir}"/strategies/*.sh "${stage_dir}"/templates/*.sh 2>/dev/null
+
+    if [ -d /opt/zapret2-manager ]; then
+        mv /opt/zapret2-manager "${old_dir}" || {
+            tui_error "Не удалось подготовить текущую установку к замене."
+            rm -rf "${stage_dir}" "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+            trap - INT TERM
+            return 1
+        }
+    fi
+    if ! mv "${stage_dir}" /opt/zapret2-manager; then
+        tui_error "Не удалось активировать новую версию; выполняется откат."
+        [ -d "${old_dir}" ] && mv "${old_dir}" /opt/zapret2-manager 2>/dev/null
+        rm -rf "${stage_dir}" "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+        trap - INT TERM
+        return 1
+    fi
+    swap_complete=1
+
+    # Обновление команд z2m и zsm
+    local z2m_wrapper="/usr/bin/.z2m.$$" zsm_wrapper="/usr/bin/.zsm.$$"
+    if ! cat << 'EOF' > "${z2m_wrapper}"
+#!/bin/sh
+exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
+EOF
+    then
+        tui_error "Не удалось обновить команду /usr/bin/z2m; выполняется откат."
+        rollback_self_update
+        return 1
+    fi
+
+    if ! cat << 'EOF' > "${zsm_wrapper}"
+#!/bin/sh
+exec /bin/sh /opt/zapret2-manager/zapret2-manager.sh "$@"
+EOF
+    then
+        tui_error "Не удалось обновить команду /usr/bin/zsm; выполняется откат."
+        rm -f "${z2m_wrapper}" "${zsm_wrapper}" 2>/dev/null
+        rollback_self_update
+        return 1
+    fi
+    if ! chmod +x "${z2m_wrapper}" "${zsm_wrapper}" 2>/dev/null || \
+       ! mv -f "${z2m_wrapper}" /usr/bin/z2m || \
+       ! mv -f "${zsm_wrapper}" /usr/bin/zsm; then
+        tui_error "Не удалось атомарно обновить команды z2m/zsm; выполняется откат."
+        rm -f "${z2m_wrapper}" "${zsm_wrapper}" 2>/dev/null
+        rollback_self_update
+        return 1
+    fi
+
+    # Self-update changes only manager files. User strategies, ports, hostlists
+    # and custom.d scripts are deliberately left untouched.
+    rm -rf "${old_dir}" "${tmp_tar}" "${tmp_dir}" 2>/dev/null
+    trap - INT TERM
     tui_success "Zapret2-Manager успешно обновлен!"
     echo ""
     tui_info "Перезапуск интерфейса менеджера..."
@@ -440,7 +609,10 @@ run_update_all() {
     tui_banner
     tui_header "🚀 Полное обновление: Zapret2 + Zapret2-Manager"
     tui_info "Шаг 1 из 2: Обновление пакета Zapret2..."
-    zapret_run_update "" "0" "1"
+    if ! zapret_run_update "" "0" "1"; then
+        tui_error "Обновление Zapret2 завершилось ошибкой; самообновление менеджера отменено."
+        return 1
+    fi
 
     echo ""
     tui_info "Шаг 2 из 2: Обновление Zapret2-Manager..."

@@ -25,7 +25,7 @@ printf "%b\n" "${CYAN}             Установка Zapret2-Manager на OpenW
 printf "%b\n" "${CYAN}================================================================${NC}"
 
 # 1. Проверка OpenWrt
-if [ ! -f /etc/openwrt_release ] && [ ! -f /etc/os-release ]; then
+if [ ! -f /etc/openwrt_release ] && ! grep -q -E "^ID=['\"]?openwrt['\"]?$" /etc/os-release 2>/dev/null; then
     printf "%b\n" "${RED}Ошибка: данный скрипт предназначен только для OpenWrt!${NC}" >&2
     exit 1
 fi
@@ -96,7 +96,9 @@ mkdir -p "${TMP_WORK_DIR}" 2>/dev/null
 cleanup_install() {
     rm -rf "${TMP_WORK_DIR}" 2>/dev/null
 }
-trap cleanup_install EXIT INT TERM
+trap cleanup_install EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # 5. Проверка наличия zapret2 (все возможные пути и менеджеры пакетов)
 zapret_already_installed() {
@@ -121,12 +123,21 @@ zapret_already_installed() {
 install_download() {
     dl_url="$1"
     dl_dst="$2"
-    rm -f "${dl_dst}" 2>/dev/null
+    dl_tmp="${dl_dst}.part.$$"
+    rm -f "${dl_dst}" "${dl_tmp}" 2>/dev/null
     if command -v curl >/dev/null 2>&1; then
-        curl -sSL -k --connect-timeout 8 -m 60 "${dl_url}" -o "${dl_dst}" 2>/dev/null
+        if curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 8 -m 60 "${dl_url}" -o "${dl_tmp}" 2>/dev/null; then
+            mv -f "${dl_tmp}" "${dl_dst}"
+        else
+            rm -f "${dl_tmp}" 2>/dev/null
+        fi
     fi
     if [ ! -s "${dl_dst}" ] && command -v wget >/dev/null 2>&1; then
-        wget -q --timeout=30 -O "${dl_dst}" "${dl_url}" 2>/dev/null
+        if wget -q --timeout=30 -O "${dl_tmp}" "${dl_url}" 2>/dev/null; then
+            mv -f "${dl_tmp}" "${dl_dst}"
+        else
+            rm -f "${dl_tmp}" 2>/dev/null
+        fi
     fi
     [ -s "${dl_dst}" ]
 }
@@ -155,7 +166,13 @@ else
 
     if [ "${PKG_MGR}" = "apk" ]; then
         mkdir -p /etc/apk/keys 2>/dev/null
-        install_download "${ZAPRET_BASE_URL}/zapret2-1andrevich.pub" "/etc/apk/keys/zapret2-1andrevich.pub"
+        KEY_FILE="${TMP_WORK_DIR}/zapret2-1andrevich.pub"
+        if install_download "${ZAPRET_BASE_URL}/zapret2-1andrevich.pub" "${KEY_FILE}"; then
+            cp -f "${KEY_FILE}" /etc/apk/keys/zapret2-1andrevich.pub
+            chmod 644 /etc/apk/keys/zapret2-1andrevich.pub 2>/dev/null
+        elif [ ! -s /etc/apk/keys/zapret2-1andrevich.pub ]; then
+            printf "%b\n" "${RED}Не удалось безопасно получить ключ подписи APK.${NC}" >&2
+        fi
         install_download "${ZAPRET_BASE_URL}/zapret2_${ARCH}.apk" "${PKG_FILE}"
         if [ ! -s "${PKG_FILE}" ] && [ -n "${FALLBACK_ARCH}" ]; then
             printf "%b\n" "${YELLOW}Пробуем совместимую архитектуру ${FALLBACK_ARCH}...${NC}"
@@ -165,9 +182,13 @@ else
 
         if [ -s "${PKG_FILE}" ]; then
             if [ -s "${LUCI_FILE}" ]; then
-                apk add --allow-untrusted "${PKG_FILE}" "${LUCI_FILE}"
+                if ! apk add "${PKG_FILE}" "${LUCI_FILE}"; then
+                    printf "%b\n" "${RED}Ошибка установки пакетов Zapret2 через apk.${NC}" >&2
+                fi
             else
-                apk add --allow-untrusted "${PKG_FILE}"
+                if ! apk add "${PKG_FILE}"; then
+                    printf "%b\n" "${RED}Ошибка установки пакета Zapret2 через apk.${NC}" >&2
+                fi
             fi
         else
             printf "%b\n" "${RED}Пакет под ${ARCH} не найден в релизах zapret2-openwrt.${NC}" >&2
@@ -184,9 +205,13 @@ else
         if [ -s "${PKG_FILE}" ]; then
             opkg update >/dev/null 2>&1
             if [ -s "${LUCI_FILE}" ]; then
-                opkg install "${PKG_FILE}" "${LUCI_FILE}"
+                if ! opkg install "${PKG_FILE}" "${LUCI_FILE}"; then
+                    printf "%b\n" "${RED}Ошибка установки пакетов Zapret2 через opkg.${NC}" >&2
+                fi
             else
-                opkg install "${PKG_FILE}"
+                if ! opkg install "${PKG_FILE}"; then
+                    printf "%b\n" "${RED}Ошибка установки пакета Zapret2 через opkg.${NC}" >&2
+                fi
             fi
         else
             printf "%b\n" "${RED}Не удалось автоматически загрузить zapret2_${ARCH}.ipk${NC}" >&2
@@ -272,49 +297,15 @@ if [ -d "${INSTALL_DIR}/fake" ]; then
     chmod 644 /opt/zapret2/files/fake/*.bin 2>/dev/null
 fi
 if [ -d "${INSTALL_DIR}/lists" ]; then
-    cp -f "${INSTALL_DIR}/lists/"*.txt /opt/zapret2/ipset/ 2>/dev/null
+    for list_file in "${INSTALL_DIR}/lists/"*.txt; do
+        [ -f "${list_file}" ] || continue
+        [ -f "/opt/zapret2/ipset/${list_file##*/}" ] || cp -f "${list_file}" /opt/zapret2/ipset/ 2>/dev/null
+    done
     chmod 644 /opt/zapret2/ipset/*.txt 2>/dev/null
 fi
 
-# Установка объединенного фикса Discord Voice (custom.d script #50)
-if [ -f "${INSTALL_DIR}/templates/50-script.sh" ]; then
-    printf "%b\n" "${CYAN}Устанавливаем исправление Discord Voice (custom.d script #50)...${NC}"
-    cp -f "${INSTALL_DIR}/templates/50-script.sh" /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
-    chmod 755 /opt/zapret2/init.d/openwrt/custom.d/50-script.sh 2>/dev/null
-    rm -f /opt/zapret2/init.d/openwrt/custom.d/50-stun4all* /opt/zapret2/init.d/openwrt/custom.d/50-discord* 2>/dev/null
-fi
-
-# Авто-исправление поврежденных двойных кавычек в конфигурации
-if [ -f /opt/zapret2/config ]; then
-    if ! sh -n /opt/zapret2/config 2>/dev/null; then
-        raw_opt=$(grep "^NFQWS2_OPT=" /opt/zapret2/config 2>/dev/null | sed 's/^NFQWS2_OPT=//' | tr -d '"')
-        sed -i "s|^NFQWS2_OPT=.*|NFQWS2_OPT=\"${raw_opt}\"|" /opt/zapret2/config 2>/dev/null
-    fi
-    sed -i 's/^DISABLE_CUSTOM=.*/DISABLE_CUSTOM=0/' /opt/zapret2/config 2>/dev/null
-    sed -i 's|^NFQWS2_PORTS_TCP=.*|NFQWS2_PORTS_TCP="80,443,2053,2083,2087,2096,8443"|' /opt/zapret2/config 2>/dev/null
-    sed -i 's|^NFQWS2_PORTS_UDP=.*|NFQWS2_PORTS_UDP="443,19294-19344,50000-65535"|' /opt/zapret2/config 2>/dev/null
-fi
-if command -v uci >/dev/null 2>&1; then
-    cur_opt="$(uci -q get zapret2.config.NFQWS2_OPT)"
-    if [ -n "${cur_opt}" ]; then
-        clean_opt="$(echo "${cur_opt}" | tr -d '"')"
-        uci set zapret2.config.NFQWS2_OPT="${clean_opt}"
-    fi
-    uci set zapret2.config.DISABLE_CUSTOM='0'
-    uci set zapret2.config.NFQWS2_PORTS_TCP='80,443,2053,2083,2087,2096,8443'
-    uci set zapret2.config.NFQWS2_PORTS_UDP='443,19294-19344,50000-65535'
-    uci commit zapret2 2>/dev/null
-fi
-
-# Перезапуск zapret2 с чистой конфигурацией если служба существует
-if [ -f /opt/zapret2/sync_config.sh ]; then
-    /opt/zapret2/sync_config.sh >/dev/null 2>&1
-fi
-if [ -f /etc/init.d/zapret2 ]; then
-    /etc/init.d/zapret2 restart >/dev/null 2>&1
-elif [ -f /etc/init.d/zapret ]; then
-    /etc/init.d/zapret restart >/dev/null 2>&1
-fi
+# Менеджер не включает custom.d, не меняет порты и не перезаписывает
+# пользовательскую стратегию без явного выбора соответствующего пункта меню.
 
 # 11. Тестовый запуск для проверки
 echo ""

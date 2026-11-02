@@ -48,7 +48,7 @@ run_hostlists_menu() {
                 _add_custom_domain
                 ;;
             6)
-                zapret_sync_hostlists
+                zapret_sync_hostlists 1
                 tui_success "Списки успешно синхронизированы!"
                 tui_pause
                 ;;
@@ -87,6 +87,12 @@ _add_custom_domain() {
     local domain
     domain=$(tui_prompt "Введите домен (например, sub.domain.com)" "")
     [ -z "${domain}" ] && return
+    domain=$(echo "${domain}" | tr '[:upper:]' '[:lower:]')
+    if ! echo "${domain}" | grep -E -q '^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]*[a-z0-9])?$'; then
+        tui_error "Некорректное доменное имя. Укажите только имя хоста без протокола и пути."
+        tui_pause
+        return 1
+    fi
 
     printf "В какой список добавить?\n"
     printf "1. Discord\n2. YouTube\n3. Исключения (Exclude)\n4. Пользовательский (User)\n"
@@ -102,7 +108,12 @@ _add_custom_domain() {
     esac
 
     mkdir -p "$(dirname "${file}")"
-    echo "${domain}" >> "${file}"
+    if grep -Fqx "${domain}" "${file}" 2>/dev/null; then
+        tui_warn "Домен «${domain}» уже присутствует в списке."
+        tui_pause
+        return 0
+    fi
+    printf '%s\n' "${domain}" >> "${file}"
     tui_success "Домен «${domain}» добавлен в ${file}!"
     zapret_restart
     tui_pause

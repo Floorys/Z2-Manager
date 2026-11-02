@@ -4,7 +4,7 @@
 # Zapret2-Manager: Global Configuration & Environment Constants
 # ==============================================================================
 
-Z2M_VERSION="1.3.0"
+Z2M_VERSION="1.3.1"
 Z2M_APP_NAME="Zapret2-Manager"
 Z2M_GITHUB_REPO="Floorys/Z2-Manager"
 
@@ -70,10 +70,14 @@ fi
 export Z2M_DIR
 
 Z2M_TMP="/tmp/zapret2-manager"
-mkdir -p "${Z2M_TMP}" 2>/dev/null
 Z2M_BACKUP_DIR="${Z2M_DIR}/backups"
-mkdir -p "${Z2M_BACKUP_DIR}" 2>/dev/null
 Z2M_LOG_FILE="${Z2M_TMP}/z2m.log"
+
+# Create writable runtime state only for operations that actually need it.
+# Read-only commands such as --help and --status must have no filesystem side effects.
+z2m_prepare_runtime() {
+    mkdir -p "${Z2M_TMP}" 2>/dev/null
+}
 
 # Network test interface (optional: e.g. "br-lan" or LAN IP)
 CURL_INTERFACE="${CURL_INTERFACE:-}"

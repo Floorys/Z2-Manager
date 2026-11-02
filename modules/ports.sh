@@ -41,14 +41,20 @@ run_ports_menu() {
         case "${choice}" in
             1)
                 tui_info "Применение рекомендуемых портов..."
-                zapret_set_ports "${DEFAULT_PORTS_TCP}" "${DEFAULT_PORTS_UDP}"
-                tui_success "Рекомендуемые порты успешно установлены!"
+                if zapret_set_ports "${DEFAULT_PORTS_TCP}" "${DEFAULT_PORTS_UDP}"; then
+                    tui_success "Рекомендуемые порты успешно установлены!"
+                else
+                    tui_error "Не удалось применить порты или перезапустить Zapret2."
+                fi
                 tui_pause
                 ;;
             2)
                 tui_info "Применение расширенных игровых портов..."
-                zapret_set_ports "80,443,2053,2083,2087,2096,8443,25565,27015-27030" "443,19294-19344,27015-27030,50000-65535"
-                tui_success "Расширенные игровые порты успешно установлены!"
+                if zapret_set_ports "80,443,2053,2083,2087,2096,8443,25565,27015-27030" "443,19294-19344,27015-27030,50000-65535"; then
+                    tui_success "Расширенные игровые порты успешно установлены!"
+                else
+                    tui_error "Не удалось применить порты или перезапустить Zapret2."
+                fi
                 tui_pause
                 ;;
             3)
@@ -58,8 +64,11 @@ run_ports_menu() {
                 local new_tcp
                 new_tcp=$(tui_prompt "Введите список портов TCP через запятую" "${cur_tcp}")
                 if [ -n "${new_tcp}" ]; then
-                    zapret_set_ports "${new_tcp}" "${cur_udp}"
-                    tui_success "Порты TCP обновлены!"
+                    if zapret_set_ports "${new_tcp}" "${cur_udp}"; then
+                        tui_success "Порты TCP обновлены!"
+                    else
+                        tui_error "Некорректный список портов или ошибка перезапуска Zapret2."
+                    fi
                 fi
                 tui_pause
                 ;;
@@ -70,15 +79,21 @@ run_ports_menu() {
                 local new_udp
                 new_udp=$(tui_prompt "Введите список портов UDP через запятую" "${cur_udp}")
                 if [ -n "${new_udp}" ]; then
-                    zapret_set_ports "${cur_tcp}" "${new_udp}"
-                    tui_success "Порты UDP обновлены!"
+                    if zapret_set_ports "${cur_tcp}" "${new_udp}"; then
+                        tui_success "Порты UDP обновлены!"
+                    else
+                        tui_error "Некорректный список портов или ошибка перезапуска Zapret2."
+                    fi
                 fi
                 tui_pause
                 ;;
             5)
                 tui_info "Сброс портов на стандартные минимальные (80,443 / 443)..."
-                zapret_set_ports "80,443" "443"
-                tui_success "Порты сброшены."
+                if zapret_set_ports "80,443" "443"; then
+                    tui_success "Порты сброшены."
+                else
+                    tui_error "Не удалось сбросить порты."
+                fi
                 tui_pause
                 ;;
             0)

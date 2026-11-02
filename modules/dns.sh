@@ -84,7 +84,10 @@ _check_dns_poisoning() {
     local ip=""
 
     if command -v nslookup >/dev/null 2>&1; then
-        ip=$(nslookup "${test_domain}" 2>/dev/null | grep -A1 "Name:" | grep "Address" | awk '{print $2}' | head -n1)
+        ip=$(nslookup "${test_domain}" 2>/dev/null | awk '
+            /^Name:/ { answer = 1; next }
+            answer && /^Address/ { print $NF; exit }
+        ')
     fi
 
     if [ -z "${ip}" ] && command -v getent >/dev/null 2>&1; then
@@ -173,6 +176,26 @@ _setup_doh() {
             ;;
     esac
 
+    case "${doh_url}" in
+        *[[:space:]]*|http://*|'' )
+            tui_error "DoH URL должен начинаться с https:// и не содержать пробелов."
+            tui_pause
+            return 1
+            ;;
+        https://*) ;;
+        *)
+            tui_error "DoH URL должен начинаться с https:// и не содержать пробелов."
+            tui_pause
+            return 1
+            ;;
+    esac
+
+    if ! command -v uci >/dev/null 2>&1; then
+        tui_error "UCI не найден; настройка DNS отменена."
+        tui_pause
+        return 1
+    fi
+
     tui_info "Проверка пакета https-dns-proxy..."
     if ! command -v https-dns-proxy >/dev/null 2>&1; then
         tui_info "Устанавливаем https-dns-proxy..."
@@ -185,26 +208,77 @@ _setup_doh() {
     fi
 
     if command -v https-dns-proxy >/dev/null 2>&1; then
+        z2m_prepare_runtime || return 1
+        local doh_was_running=0
+        is_doh_running && doh_was_running=1
+        local dhcp_backup doh_backup
+        dhcp_backup=$(mktemp "${Z2M_TMP}/dhcp_backup.XXXXXX") || return 1
+        doh_backup=$(mktemp "${Z2M_TMP}/doh_backup.XXXXXX") || {
+            rm -f "${dhcp_backup}"; return 1;
+        }
+        if ! uci export dhcp > "${dhcp_backup}" 2>/dev/null; then
+            tui_error "Не удалось сохранить текущую конфигурацию DNS."
+            rm -f "${dhcp_backup}" "${doh_backup}"
+            tui_pause
+            return 1
+        fi
+        uci export https-dns-proxy > "${doh_backup}" 2>/dev/null || : > "${doh_backup}"
+
         # Конфигурация https-dns-proxy
+        local dns_config_ok=1
         uci -q delete https-dns-proxy.@https-dns-proxy[0] 2>/dev/null
-        uci add https-dns-proxy https-dns-proxy >/dev/null 2>&1
-        uci set https-dns-proxy.@https-dns-proxy[0].bootstrap_dns="${bootstrap_ips}" 2>/dev/null
-        uci set https-dns-proxy.@https-dns-proxy[0].resolver_url="${doh_url}" 2>/dev/null
-        uci set https-dns-proxy.@https-dns-proxy[0].url_prefix="${doh_url}" 2>/dev/null
-        uci set https-dns-proxy.@https-dns-proxy[0].listen_addr="127.0.0.1" 2>/dev/null
-        uci set https-dns-proxy.@https-dns-proxy[0].listen_port="5053" 2>/dev/null
-        uci commit https-dns-proxy 2>/dev/null
+        uci add https-dns-proxy https-dns-proxy >/dev/null 2>&1 || dns_config_ok=0
+        uci set https-dns-proxy.@https-dns-proxy[0].bootstrap_dns="${bootstrap_ips}" 2>/dev/null || dns_config_ok=0
+        uci set https-dns-proxy.@https-dns-proxy[0].resolver_url="${doh_url}" 2>/dev/null || dns_config_ok=0
+        uci set https-dns-proxy.@https-dns-proxy[0].url_prefix="${doh_url}" 2>/dev/null || dns_config_ok=0
+        uci set https-dns-proxy.@https-dns-proxy[0].listen_addr="127.0.0.1" 2>/dev/null || dns_config_ok=0
+        uci set https-dns-proxy.@https-dns-proxy[0].listen_port="5053" 2>/dev/null || dns_config_ok=0
+        uci commit https-dns-proxy 2>/dev/null || dns_config_ok=0
 
         /etc/init.d/https-dns-proxy enable >/dev/null 2>&1
         /etc/init.d/https-dns-proxy restart >/dev/null 2>&1
 
         # Направляем dnsmasq на локальный DoH прокси (127.0.0.1#5053)
         uci -q delete dhcp.@dnsmasq[0].server 2>/dev/null
-        uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#5053"
-        uci set dhcp.@dnsmasq[0].noresolv="1"
-        uci commit dhcp
+        uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#5053" || dns_config_ok=0
+        uci set dhcp.@dnsmasq[0].noresolv="1" || dns_config_ok=0
+        uci commit dhcp || dns_config_ok=0
         /etc/init.d/dnsmasq restart >/dev/null 2>&1
-        tui_success "DoH (${doh_name}) успешно настроен и запущен через 127.0.0.1:5053!"
+
+        sleep 2
+        local doh_ok=0
+        if [ "${dns_config_ok}" -eq 1 ] && is_doh_running; then
+            if command -v nslookup >/dev/null 2>&1; then
+                nslookup openwrt.org 127.0.0.1 >/dev/null 2>&1 && doh_ok=1
+            else
+                doh_ok=1
+            fi
+        fi
+
+        if [ "${doh_ok}" -ne 1 ]; then
+            tui_error "DoH-прокси не прошёл проверку. Восстанавливаем предыдущую DNS-конфигурацию."
+            /etc/init.d/https-dns-proxy stop >/dev/null 2>&1
+            uci import dhcp < "${dhcp_backup}" 2>/dev/null
+            uci commit dhcp 2>/dev/null
+            if [ -s "${doh_backup}" ]; then
+                uci import https-dns-proxy < "${doh_backup}" 2>/dev/null
+                uci commit https-dns-proxy 2>/dev/null
+            else
+                uci -q delete 'https-dns-proxy.@https-dns-proxy[0]' 2>/dev/null
+                uci commit https-dns-proxy 2>/dev/null
+            fi
+            if [ "${doh_was_running}" -eq 1 ]; then
+                /etc/init.d/https-dns-proxy restart >/dev/null 2>&1
+            else
+                /etc/init.d/https-dns-proxy stop >/dev/null 2>&1
+            fi
+            /etc/init.d/dnsmasq restart >/dev/null 2>&1
+            rm -f "${dhcp_backup}" "${doh_backup}"
+            tui_pause
+            return 1
+        fi
+        rm -f "${dhcp_backup}" "${doh_backup}"
+        tui_success "DoH (${doh_name}) успешно настроен и проверен через 127.0.0.1:5053!"
     else
         tui_warn "Пакет https-dns-proxy недоступен в репозиториях вашего роутера."
         tui_info "Настраиваем безопасные DNS напрямую в dnsmasq..."
