@@ -3,7 +3,7 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-TMP_ROOT="/tmp/z2m-tests.$$"
+TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/z2m-tests.XXXXXX") || exit 1
 BIN_DIR="${TMP_ROOT}/bin"
 PASS=0
 FAIL=0
@@ -11,7 +11,9 @@ FAIL=0
 cleanup() {
     rm -rf "${TMP_ROOT}" 2>/dev/null
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 mkdir -p "${BIN_DIR}" "${TMP_ROOT}/runtime"
 
@@ -21,11 +23,13 @@ header_file=""
 body_file=""
 previous=""
 for argument in "$@"; do
+    [ -z "${CURL_ARGS:-}" ] || printf '%s\n' "${argument}" >> "${CURL_ARGS}"
     case "${previous}" in
         header) header_file="${argument}"; previous=""; continue ;;
         body) body_file="${argument}"; previous=""; continue ;;
     esac
     case "${argument}" in
+        '') exit 91 ;;
         -D) previous="header" ;;
         -o) previous="body" ;;
         -k|--insecure) exit 90 ;;
@@ -34,7 +38,7 @@ done
 [ -n "${header_file}" ] && : > "${header_file}"
 if [ -n "${body_file}" ]; then
     case "${FAKE_BODY:-clean}" in
-        blocked) printf '%s\n' 'Доступ заблокирован. Ресурс внесён в единый реестр.' > "${body_file}" ;;
+        blocked) cp "${BLOCK_PAGE}" "${body_file}" ;;
         *) printf '%s\n' 'normal service response' > "${body_file}" ;;
     esac
 fi
@@ -59,6 +63,8 @@ PATH="${BIN_DIR}:${PATH}"
 export PATH
 Z2M_DIR="${ROOT}"
 export Z2M_DIR
+BLOCK_PAGE="${ROOT}/tests/fixtures/blocked.html"
+export BLOCK_PAGE
 
 # The source paths are computed so the test works from any current directory.
 # shellcheck disable=SC1090
@@ -73,7 +79,7 @@ export Z2M_TMP
 check() {
     name="$1"
     shift
-    if "$@"; then
+    if (trap - EXIT INT TERM HUP; "$@"); then
         printf 'ok - %s\n' "${name}"
         PASS=$((PASS + 1))
     else
@@ -133,6 +139,14 @@ secure_download_flags() {
         "${ROOT}/install.sh" "${ROOT}/core" "${ROOT}/modules" >/dev/null 2>&1
 }
 check "insecure download flags are absent" secure_download_flags
+
+. "${ROOT}/tests/regressions.sh"
+
+if command -v node >/dev/null 2>&1; then
+    check "binary SNI, lengths and duplicate checks" node "${ROOT}/tests/check-blobs.cjs"
+else
+    printf 'skip - binary checks require Node (development only)\n'
+fi
 
 printf '\n%s passed, %s failed\n' "${PASS}" "${FAIL}"
 [ "${FAIL}" -eq 0 ]

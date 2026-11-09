@@ -1,3 +1,4 @@
+# Managed by Zapret2-Manager: Discord Voice fix
 # Discord Voice & Video Fix (STUN + Discord Media IP Discovery)
 # This custom script desyncs both Discord IP Discovery and STUN packets
 # Resolves "Infinite RTC Connecting" / "No Route" in Discord voice calls

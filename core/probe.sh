@@ -70,7 +70,9 @@ probe_curl_request() {
     local host="$1"
     local port="${2:-443}"
     local timeout="${3:-2}"
-    local extra_args="${4:-}"
+    shift 3
+    # Optional curl flags are separate arguments, never an eval/string split.
+    if [ "$#" -gt 0 ] && [ -z "$1" ]; then shift; fi
     local max_t=$(( timeout + 1 ))
 
     z2m_prepare_runtime || return 1
@@ -84,60 +86,14 @@ probe_curl_request() {
 
     # Capture HTTP headers and status code
     local http_code
-    if [ -n "${CURL_INTERFACE:-}" ]; then
-        if [ -n "${extra_args}" ]; then
-            http_code=$(curl -sS -L \
-                --proto '=https' --proto-redir '=https' \
-                --connect-timeout "${timeout}" \
-                -m "${max_t}" \
-                -A "${BROWSER_UA}" \
-                --interface "${CURL_INTERFACE}" \
-                "${extra_args}" \
-                --range 0-8191 \
-                -D "${hdr_file}" \
-                -o "${body_file}" \
-                -w "%{http_code}" \
-                "https://${host}:${port}/" 2>/dev/null)
-        else
-            http_code=$(curl -sS -L \
-                --proto '=https' --proto-redir '=https' \
-                --connect-timeout "${timeout}" \
-                -m "${max_t}" \
-                -A "${BROWSER_UA}" \
-                --interface "${CURL_INTERFACE}" \
-                --range 0-8191 \
-                -D "${hdr_file}" \
-                -o "${body_file}" \
-                -w "%{http_code}" \
-                "https://${host}:${port}/" 2>/dev/null)
-        fi
-    else
-        if [ -n "${extra_args}" ]; then
-            http_code=$(curl -sS -L \
-                --proto '=https' --proto-redir '=https' \
-                --connect-timeout "${timeout}" \
-                -m "${max_t}" \
-                -A "${BROWSER_UA}" \
-                "${extra_args}" \
-                --range 0-8191 \
-                -D "${hdr_file}" \
-                -o "${body_file}" \
-                -w "%{http_code}" \
-                "https://${host}:${port}/" 2>/dev/null)
-        else
-            http_code=$(curl -sS -L \
-                --proto '=https' --proto-redir '=https' \
-                --connect-timeout "${timeout}" \
-                -m "${max_t}" \
-                -A "${BROWSER_UA}" \
-                --range 0-8191 \
-                -D "${hdr_file}" \
-                -o "${body_file}" \
-                -w "%{http_code}" \
-                "https://${host}:${port}/" 2>/dev/null)
-        fi
-    fi
+    PROBE_CURL_EXIT=0
+    [ -z "${CURL_INTERFACE:-}" ] || set -- "$@" --interface "${CURL_INTERFACE}"
+    http_code=$(curl -sS -L --proto '=https' --proto-redir '=https' \
+        --connect-timeout "${timeout}" -m "${max_t}" -A "${BROWSER_UA}" \
+        "$@" --range 0-8191 -D "${hdr_file}" -o "${body_file}" \
+        -w "%{http_code}" "https://${host}:${port}/" 2>/dev/null)
     local curl_exit=$?
+    PROBE_CURL_EXIT="${curl_exit}"
 
     # Separate curl exit code from HTTP code
     if [ "${curl_exit}" -ne 0 ]; then
@@ -196,7 +152,7 @@ probe_tls12() {
     local timeout="${3:-2}"
 
     if command -v curl >/dev/null 2>&1; then
-        probe_curl_request "${host}" "${port}" "${timeout}" "--tlsv1.2"
+        probe_curl_request "${host}" "${port}" "${timeout}" --tlsv1.2 --tls-max 1.2
         return $?
     elif command -v openssl >/dev/null 2>&1; then
         printf "" | openssl s_client -servername "${host}" -connect "${host}:${port}" \
@@ -289,31 +245,13 @@ probe_dpi_verdict() {
         return 0
     fi
 
-    local err_file
-    z2m_prepare_runtime || { echo "NoConnection"; return 0; }
-    err_file=$(mktemp "${Z2M_TMP}/curl_dpi_err.XXXXXX")
-    [ -n "${err_file}" ] || { echo "NoConnection"; return 0; }
-
-    local intf_opt=""
-    if [ -n "${CURL_INTERFACE:-}" ]; then
-        intf_opt="--interface ${CURL_INTERFACE}"
-    fi
-
-    # shellcheck disable=SC2086
-    curl -sS -o /dev/null -I --connect-timeout 2 -m 4 ${intf_opt} "https://${host}:${port}/" 2>"${err_file}"
-    local code=$?
-
-    if [ ${code} -eq 0 ]; then
-        rm -f "${err_file}" 2>/dev/null
+    # Use the same GET/status/header/body policy as the selection probe.
+    PROBE_CURL_EXIT=0
+    if probe_curl_request "${host}" "${port}" 3; then
         echo "Clean"
         return 0
     fi
-
-    local err_msg=""
-    [ -f "${err_file}" ] && err_msg="$(cat "${err_file}")"
-    rm -f "${err_file}" 2>/dev/null
-
-    case "${code}" in
+    case "${PROBE_CURL_EXIT}" in
         35|52|56)
             echo "Reset"
             ;;
@@ -327,13 +265,7 @@ probe_dpi_verdict() {
             echo "NoConnection"
             ;;
         *)
-            if echo "${err_msg}" | grep -qi "reset"; then
-                echo "Reset"
-            elif echo "${err_msg}" | grep -qi "timeout"; then
-                echo "Freeze"
-            else
-                echo "Blocked"
-            fi
+            echo "Blocked"
             ;;
     esac
 }

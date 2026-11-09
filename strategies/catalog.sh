@@ -19,7 +19,7 @@ catalog_get_name() {
         5) echo "Комбо — Flowseal (multisplit seqovl)" ;;
         6) echo "Комбо — Flowseal ALT (fake+fakedsplit)" ;;
         7) echo "Комбо — окно (wssize)" ;;
-        8) echo "Discord — голос (QUIC-фейк)" ;;
+        8) echo "Discord — голос (STUN + IP Discovery)" ;;
         9) echo "Discord — адаптивный (circular, эксперим.)" ;;
         *) echo "Unknown" ;;
     esac
@@ -93,10 +93,7 @@ catalog_get_opt() {
             local filter_dc=""
             [ -f "${hostlist_discord}" ] && filter_dc="--hostlist=${hostlist_discord}"
             local opt="--ctrack-disable=0 --ipcache-lifetime=8400 --ipcache-hostname=1"
-            [ -f "${ZAPRET2_FAKE_DIR}/tls_clienthello_www_google_com.bin" ] && \
-                opt="${opt} --blob=tls_google:@${ZAPRET2_FAKE_DIR}/tls_clienthello_www_google_com.bin"
-            [ -f "${ZAPRET2_FAKE_DIR}/quic_initial_www_google_com.bin" ] && \
-                opt="${opt} --blob=quic_google:@${ZAPRET2_FAKE_DIR}/quic_initial_www_google_com.bin"
+            opt="${opt}$(combo_blob_args)" || return 1
             opt="${opt} --filter-tcp=443-65535 --filter-l7=tls ${filter_dc} --out-range=-d10 --payload=tls_client_hello --lua-desync=multisplit:pos=2,midsld-2:seqovl=1:seqovl_pattern=tls_google:optional"
             opt="${opt} --new --filter-udp=19294-19344,50000-65535 --filter-l7=discord,stun --payload=discord_ip_discovery,stun --lua-desync=fake:blob=0x00000000000000000000000000000000:repeats=2"
             echo "${opt}"
@@ -107,17 +104,10 @@ catalog_get_opt() {
             local filter_dc=""
             [ -f "${hostlist_discord}" ] && filter_dc="--hostlist=${hostlist_discord}"
             local opt="--ctrack-disable=0 --ipcache-lifetime=8400 --ipcache-hostname=1"
-            [ -f "${ZAPRET2_FAKE_DIR}/tls_clienthello_www_google_com.bin" ] && \
-                opt="${opt} --blob=tls_google:@${ZAPRET2_FAKE_DIR}/tls_clienthello_www_google_com.bin"
-            [ -f "${ZAPRET2_FAKE_DIR}/tls_clienthello_vk_com.bin" ] && \
-                opt="${opt} --blob=tls_vk:@${ZAPRET2_FAKE_DIR}/tls_clienthello_vk_com.bin"
-            [ -f "${ZAPRET2_FAKE_DIR}/quic_initial_www_google_com.bin" ] && \
-                opt="${opt} --blob=quic_google:@${ZAPRET2_FAKE_DIR}/quic_initial_www_google_com.bin"
-            [ -f "${ZAPRET2_FAKE_DIR}/quic_initial_vk_com.bin" ] && \
-                opt="${opt} --blob=quic_vk:@${ZAPRET2_FAKE_DIR}/quic_initial_vk_com.bin"
+            opt="${opt}$(combo_blob_args)" || return 1
             opt="${opt} --filter-tcp=443-65535 --filter-l7=tls ${filter_dc} --in-range=-s5556 --out-range=-d10 --payload=tls_client_hello --lua-desync=circular:fails=2:time=300 --lua-desync=hostfakesplit:host=www.google.com:tcp_ts=-1000:tcp_md5:repeats=4:strategy=1 --lua-desync=fake:blob=tls_google:tcp_ts=-1000:repeats=6:strategy=2 --lua-desync=fake:blob=tls_vk:tcp_ts=-1000:repeats=6:strategy=2 --lua-desync=fake:blob=tls_google:tcp_ts=-1000:repeats=6:strategy=3 --lua-desync=multisplit:pos=1,midsld:seqovl=681:seqovl_pattern=tls_google:strategy=3:optional"
-            opt="${opt} --new --filter-udp=443-65535 --filter-l7=quic ${filter_dc} --payload=quic_initial --lua-desync=fake:blob=quic_google:repeats=11"
-            opt="${opt} --new --filter-udp=19294-19344,50000-65535 --filter-l7=discord,stun --lua-desync=fake:blob=quic_vk:repeats=6"
+            opt="${opt} --new --filter-udp=443-65535 --filter-l7=quic ${filter_dc} --payload=quic_initial --lua-desync=fake:blob=quic_generic:repeats=11"
+            opt="${opt} --new --filter-udp=19294-19344,50000-65535 --filter-l7=discord,stun --lua-desync=fake:blob=quic_generic:repeats=6"
             echo "${opt}"
             ;;
         *)

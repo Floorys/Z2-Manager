@@ -7,6 +7,17 @@
 [ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
 [ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
 
+combo_blob_args() {
+    local entry alias file src
+    for entry in tls_google:tls_clienthello_www_google_com.bin tls_vk:tls_clienthello_vk_com.bin tls_sber:tls_clienthello_sberbank_ru.bin tls_gos:tls_clienthello_gosuslugi_ru.bin quic_generic:quic_initial_generic.bin; do
+        alias="${entry%%:*}"; file="${entry#*:}"
+        src="${ZAPRET2_FAKE_DIR}/${file}"
+        [ -f "${src}" ] || src="${Z2M_DIR}/fake/${file}"
+        [ -f "${src}" ] || return 1
+        printf ' --blob=%s:@%s' "${alias}" "${src}"
+    done
+}
+
 # Build full NFQWS2_OPT argument string from components:
 # $1: discord_tls_desync
 # $2: youtube_tls_desync
@@ -37,32 +48,17 @@ combo_build_args() {
         filter_ex="--hostlist-exclude=${hostlist_exclude}"
     fi
 
-    # Determine fake blob directory
-    local fdir="${ZAPRET2_FAKE_DIR}"
-    if [ ! -f "${fdir}/tls_clienthello_www_google_com.bin" ]; then
-        fdir="${Z2M_DIR}/fake"
-    fi
-
-    # Declare all available fake blobs
-    local blobs=""
-    [ -f "${fdir}/tls_clienthello_www_google_com.bin" ] && \
-        blobs="${blobs} --blob=tls_google:@${fdir}/tls_clienthello_www_google_com.bin"
-    [ -f "${fdir}/quic_initial_www_google_com.bin" ] && \
-        blobs="${blobs} --blob=quic_google:@${fdir}/quic_initial_www_google_com.bin"
-    [ -f "${fdir}/tls_clienthello_vk_com.bin" ] && \
-        blobs="${blobs} --blob=tls_vk:@${fdir}/tls_clienthello_vk_com.bin"
-    [ -f "${fdir}/tls_clienthello_sberbank_ru.bin" ] && \
-        blobs="${blobs} --blob=tls_sber:@${fdir}/tls_clienthello_sberbank_ru.bin"
-    [ -f "${fdir}/tls_clienthello_gosuslugi_ru.bin" ] && \
-        blobs="${blobs} --blob=tls_gos:@${fdir}/tls_clienthello_gosuslugi_ru.bin"
-    [ -f "${fdir}/quic_initial_vk_com.bin" ] && \
-        blobs="${blobs} --blob=quic_vk:@${fdir}/quic_initial_vk_com.bin"
+    local blobs
+    blobs=$(combo_blob_args) || return 1
 
     # Base options (no double quotes to prevent syntax corruption in /opt/zapret2/config)
     local opt="--ctrack-disable=0 --ipcache-lifetime=8400 --ipcache-hostname=1${blobs}"
 
+    # HTTP must be profiled as well as intercepted; TLS-only rules ignore port 80.
+    opt="${opt} --filter-tcp=80 --filter-l7=http ${filter_ex} --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2"
+
     # Profile 1: Discord TLS
-    opt="${opt} --filter-tcp=443-65535 --filter-l7=tls ${filter_dc} --out-range=-d10 --payload=tls_client_hello ${discord_tls}"
+    opt="${opt} --new --filter-tcp=443-65535 --filter-l7=tls ${filter_dc} --out-range=-d10 --payload=tls_client_hello ${discord_tls}"
 
     # Profile 2: YouTube TLS
     opt="${opt} --new --filter-tcp=443-65535 --filter-l7=tls ${filter_yt} --out-range=-d10 --payload=tls_client_hello ${youtube_tls}"
@@ -71,13 +67,13 @@ combo_build_args() {
     opt="${opt} --new --filter-tcp=443-65535 --filter-l7=tls ${filter_ex} --out-range=-d10 --payload=tls_client_hello ${fallback_tls}"
 
     # Profile 4: QUIC YouTube
-    opt="${opt} --new --filter-udp=443-65535 --filter-l7=quic ${filter_yt} --payload=quic_initial --lua-desync=fake:blob=quic_google:repeats=11"
+    opt="${opt} --new --filter-udp=443-65535 --filter-l7=quic ${filter_yt} --payload=quic_initial --lua-desync=fake:blob=quic_generic:repeats=11"
 
     # Profile 5: QUIC Discord (media/cdn HTTP/3)
-    opt="${opt} --new --filter-udp=443-65535 --filter-l7=quic ${filter_dc} --payload=quic_initial --lua-desync=fake:blob=quic_google:repeats=11"
+    opt="${opt} --new --filter-udp=443-65535 --filter-l7=quic ${filter_dc} --payload=quic_initial --lua-desync=fake:blob=quic_generic:repeats=11"
 
     # Profile 6: QUIC Catch-all (excluding sensitive domains)
-    opt="${opt} --new --filter-udp=443-65535 --filter-l7=quic ${filter_ex} --payload=quic_initial --lua-desync=fake:blob=quic_google:repeats=6"
+    opt="${opt} --new --filter-udp=443-65535 --filter-l7=quic ${filter_ex} --payload=quic_initial --lua-desync=fake:blob=quic_generic:repeats=6"
 
     # Profile 7: Discord Voice (STUN + RTP high UDP ports 50000-65535)
     opt="${opt} --new --filter-udp=19294-19344,50000-65535 --filter-l7=discord,stun ${voice_desync}"
@@ -90,28 +86,13 @@ combo_build_args() {
 combo_build_single_test_args() {
     local candidate_tls="$1"
 
-    local fdir="${ZAPRET2_FAKE_DIR}"
-    if [ ! -f "${fdir}/tls_clienthello_www_google_com.bin" ]; then
-        fdir="${Z2M_DIR}/fake"
-    fi
-
-    local blobs=""
-    [ -f "${fdir}/tls_clienthello_www_google_com.bin" ] && \
-        blobs="${blobs} --blob=tls_google:@${fdir}/tls_clienthello_www_google_com.bin"
-    [ -f "${fdir}/quic_initial_www_google_com.bin" ] && \
-        blobs="${blobs} --blob=quic_google:@${fdir}/quic_initial_www_google_com.bin"
-    [ -f "${fdir}/tls_clienthello_vk_com.bin" ] && \
-        blobs="${blobs} --blob=tls_vk:@${fdir}/tls_clienthello_vk_com.bin"
-    [ -f "${fdir}/tls_clienthello_sberbank_ru.bin" ] && \
-        blobs="${blobs} --blob=tls_sber:@${fdir}/tls_clienthello_sberbank_ru.bin"
-    [ -f "${fdir}/tls_clienthello_gosuslugi_ru.bin" ] && \
-        blobs="${blobs} --blob=tls_gos:@${fdir}/tls_clienthello_gosuslugi_ru.bin"
-    [ -f "${fdir}/quic_initial_vk_com.bin" ] && \
-        blobs="${blobs} --blob=quic_vk:@${fdir}/quic_initial_vk_com.bin"
+    local blobs
+    blobs=$(combo_blob_args) || return 1
 
     local opt="--ctrack-disable=0 --ipcache-lifetime=8400 --ipcache-hostname=1${blobs}"
-    opt="${opt} --filter-tcp=443-65535 --filter-l7=tls --out-range=-d10 --payload=tls_client_hello ${candidate_tls}"
-    opt="${opt} --new --filter-udp=443-65535 --filter-l7=quic --payload=quic_initial --lua-desync=fake:blob=quic_google:repeats=6"
+    opt="${opt} --filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2"
+    opt="${opt} --new --filter-tcp=443-65535 --filter-l7=tls --out-range=-d10 --payload=tls_client_hello ${candidate_tls}"
+    opt="${opt} --new --filter-udp=443-65535 --filter-l7=quic --payload=quic_initial --lua-desync=fake:blob=quic_generic:repeats=6"
 
     echo "${opt}"
 }

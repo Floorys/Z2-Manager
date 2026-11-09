@@ -18,6 +18,10 @@
 [ -f "${Z2M_DIR}/strategies/candidates.sh" ] && . "${Z2M_DIR}/strategies/candidates.sh"
 
 run_strategy_generator() {
+    z2m_run_guarded strategy_generator_worker
+}
+
+strategy_generator_worker() {
     tui_banner
     tui_header "🧬 Генератор персональной стратегии (Asterlike Two-Pass Generator)"
 
@@ -40,26 +44,10 @@ run_strategy_generator() {
     fi
 
     # Synchronize required blobs and lists
-    zapret_sync_fake_blobs
-    zapret_sync_hostlists 0
+    zapret_sync_fake_blobs || return 1
+    zapret_sync_hostlists 0 || return 1
 
-    # Backup current configuration BEFORE any modification
-    local bak_file
-    if ! bak_file=$(zapret_backup_config) || [ -z "${bak_file}" ] || [ ! -s "${bak_file}" ]; then
-        tui_error "Не удалось создать резервную копию конфигурации. Генератор отменён."
-        tui_pause
-        return 1
-    fi
-    local interrupted=0
-
-    cleanup_generator() {
-        echo ""
-        tui_warn "Прерывание генератора! Восстанавливаем исходную конфигурацию..."
-        zapret_restore_config "${bak_file}"
-        trap - INT TERM HUP
-        interrupted=1
-    }
-    trap cleanup_generator INT TERM HUP
+    # The shared guard owns the snapshot and terminates the worker on signals.
 
     tui_info "Исходная конфигурация сохранена."
 
@@ -69,47 +57,39 @@ run_strategy_generator() {
     local base_min=0 base_sum=0
     local b_d_max=0 b_y_max=0
 
-    if zapret_is_running; then
-        local b_cd1 b_cd2 b_cy1 b_cy2
-        b_cd1=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
-        b_cy1=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
-        sleep 1
-        b_cd2=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
-        b_cy2=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
+    # A stopped service may already have direct connectivity; measure it too.
+    local b_cd1 b_cd2 b_cy1 b_cy2
+    b_cd1=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
+    b_cy1=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
+    sleep 1
+    b_cd2=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
+    b_cy2=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
 
-        local b_cd_s1 b_cd_s2 b_cy_s1 b_cy_s2
-        local b_cd_m1 b_cd_m2 b_cy_m1 b_cy_m2
-        b_cd_s1=$(echo "${b_cd1}" | awk '{print $3}')
-        b_cd_s2=$(echo "${b_cd2}" | awk '{print $3}')
-        b_cy_s1=$(echo "${b_cy1}" | awk '{print $3}')
-        b_cy_s2=$(echo "${b_cy2}" | awk '{print $3}')
+    local b_cd_s1 b_cd_s2 b_cy_s1 b_cy_s2
+    local b_cd_m1 b_cd_m2 b_cy_m1 b_cy_m2
+    b_cd_s1=$(echo "${b_cd1}" | awk '{print $3}')
+    b_cd_s2=$(echo "${b_cd2}" | awk '{print $3}')
+    b_cy_s1=$(echo "${b_cy1}" | awk '{print $3}')
+    b_cy_s2=$(echo "${b_cy2}" | awk '{print $3}')
 
-        b_cd_m1=$(echo "${b_cd1}" | awk '{print $4}')
-        b_cd_m2=$(echo "${b_cd2}" | awk '{print $4}')
-        b_cy_m1=$(echo "${b_cy1}" | awk '{print $4}')
-        b_cy_m2=$(echo "${b_cy2}" | awk '{print $4}')
+    b_cd_m1=$(echo "${b_cd1}" | awk '{print $4}')
+    b_cd_m2=$(echo "${b_cd2}" | awk '{print $4}')
+    b_cy_m1=$(echo "${b_cy1}" | awk '{print $4}')
+    b_cy_m2=$(echo "${b_cy2}" | awk '{print $4}')
 
-        base_d_score=$(( b_cd_s1 + b_cd_s2 ))
-        base_y_score=$(( b_cy_s1 + b_cy_s2 ))
-        b_d_max=$(( b_cd_m1 + b_cd_m2 ))
-        b_y_max=$(( b_cy_m1 + b_cy_m2 ))
+    base_d_score=$(( b_cd_s1 + b_cd_s2 ))
+    base_y_score=$(( b_cy_s1 + b_cy_s2 ))
+    b_d_max=$(( b_cd_m1 + b_cd_m2 ))
+    b_y_max=$(( b_cy_m1 + b_cy_m2 ))
 
-        if [ "${base_d_score}" -le "${base_y_score}" ]; then
-            base_min="${base_d_score}"
-        else
-            base_min="${base_y_score}"
-        fi
-        base_sum=$(( base_d_score + base_y_score ))
-        tui_info "Baseline: Discord: ${base_d_score}/${b_d_max}, YouTube: ${base_y_score}/${b_y_max} (Min: ${base_min}, Sum: ${base_sum})"
+    if [ "${base_d_score}" -le "${base_y_score}" ]; then
+        base_min="${base_d_score}"
     else
-        tui_warn "Служба zapret2 не запущена. Baseline score: 0"
+        base_min="${base_y_score}"
     fi
+    base_sum=$(( base_d_score + base_y_score ))
+    tui_info "Baseline: Discord: ${base_d_score}/${b_d_max}, YouTube: ${base_y_score}/${b_y_max} (Min: ${base_min}, Sum: ${base_sum})"
     echo ""
-
-    if [ "${interrupted}" -eq 1 ]; then
-        tui_pause
-        return 0
-    fi
 
     tui_info "Запуск Pass 1: тестирование ${CANDIDATES_COUNT} десинк-бандлов (по 2 повтора)..."
     echo ""
@@ -124,11 +104,6 @@ run_strategy_generator() {
     # ---- PASS 1: Screening of each bundle for Discord & YouTube (2 repeats) ----
     local i=1
     while [ "${i}" -le "${CANDIDATES_COUNT}" ]; do
-        if [ "${interrupted}" -eq 1 ]; then
-            tui_pause
-            return 0
-        fi
-
         local c_name c_tls
         c_name=$(get_candidate_name "${i}")
         c_tls=$(get_candidate_tls "${i}")
@@ -155,11 +130,6 @@ run_strategy_generator() {
             continue
         fi
 
-        if [ "${interrupted}" -eq 1 ]; then
-            tui_pause
-            return 0
-        fi
-
         # If daemon crashed or failed to start, score 0 and move on immediately
         if ! zapret_is_running; then
             printf "%-4s %-32s %b%-12s%b %b%-12s%b %b\n" \
@@ -184,11 +154,6 @@ run_strategy_generator() {
         probe_fast_tls "googlevideo.com" 443 2 && y_score_rep1=$(( y_score_rep1 + 1 ))
         probe_fast_tls "i.ytimg.com" 443 2 && y_score_rep1=$(( y_score_rep1 + 1 ))
 
-        if [ "${interrupted}" -eq 1 ]; then
-            tui_pause
-            return 0
-        fi
-
         # Short pause between repeats
         sleep 1
 
@@ -201,11 +166,6 @@ run_strategy_generator() {
         probe_http_reach "www.youtube.com" 2 && y_score_rep2=$(( y_score_rep2 + 1 ))
         probe_fast_tls "googlevideo.com" 443 2 && y_score_rep2=$(( y_score_rep2 + 1 ))
         probe_fast_tls "i.ytimg.com" 443 2 && y_score_rep2=$(( y_score_rep2 + 1 ))
-
-        if [ "${interrupted}" -eq 1 ]; then
-            tui_pause
-            return 0
-        fi
 
         # Store sum of two repeats instead of integer average
         local d_score=$(( d_score_rep1 + d_score_rep2 ))
@@ -235,11 +195,6 @@ run_strategy_generator() {
         i=$(( i + 1 ))
     done
 
-    if [ "${interrupted}" -eq 1 ]; then
-        tui_pause
-        return 0
-    fi
-
     echo ""
     tui_header "Pass 2: Сборка и совместная проверка лучших сочетаний"
 
@@ -253,7 +208,7 @@ run_strategy_generator() {
     else
         # Find top Discord candidates prioritizing gateway-friendly
         local sorted_d
-        sorted_d=$(echo "${cand_scores_d}" | tr ' ' '\n' | grep ":" | sort -t: -k2,2nr -k1,1n)
+        sorted_d=$(echo "${cand_scores_d}" | tr ' ' '\n' | awk -F: '$2 > 0' | sort -t: -k2,2nr -k1,1n)
 
         local d_count=0
         for entry in ${sorted_d}; do
@@ -275,7 +230,7 @@ run_strategy_generator() {
         fi
 
         local sorted_y
-        sorted_y=$(echo "${cand_scores_y}" | tr ' ' '\n' | grep ":" | sort -t: -k2,2nr -k1,1n)
+        sorted_y=$(echo "${cand_scores_y}" | tr ' ' '\n' | awk -F: '$2 > 0' | sort -t: -k2,2nr -k1,1n)
         top_y_list=$(echo "${sorted_y}" | head -n3 | cut -d: -f1 | tr '\n' ' ')
     fi
 
@@ -285,15 +240,10 @@ run_strategy_generator() {
     local best_d_idx=1
     local best_y_idx=1
     local attempt=0
-    local max_tests=6
+    local max_tests=9
 
     for d_idx in ${top_d_list}; do
         for y_idx in ${top_y_list}; do
-            if [ "${interrupted}" -eq 1 ]; then
-                tui_pause
-                return 0
-            fi
-
             attempt=$(( attempt + 1 ))
             [ "${attempt}" -gt "${max_tests}" ] && break 2
 
@@ -312,11 +262,6 @@ run_strategy_generator() {
                 continue
             fi
 
-            if [ "${interrupted}" -eq 1 ]; then
-                tui_pause
-                return 0
-            fi
-
             # Probe Discord & YouTube with 2 repeats for stability
             local cd_res1 cd_res2 cy_res1 cy_res2
             cd_res1=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
@@ -324,11 +269,6 @@ run_strategy_generator() {
             sleep 1
             cd_res2=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
             cy_res2=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
-
-            if [ "${interrupted}" -eq 1 ]; then
-                tui_pause
-                return 0
-            fi
 
             local cd_s1 cd_s2 cy_s1 cy_s2
             local cd_m1 cd_m2 cy_m1 cy_m2
@@ -394,18 +334,11 @@ run_strategy_generator() {
         [ "${attempt}" -gt "${max_tests}" ] && break
     done
 
-    if [ "${interrupted}" -eq 1 ]; then
-        tui_pause
-        return 0
-    fi
-
     # If no strategy passed threshold (> 0), restore backup and inform user
     if [ "${best_min}" -le 0 ] && [ "${best_sum}" -le 0 ]; then
         echo ""
         tui_error "Ни одна стратегия не смогла обеспечить доступ к тестируемым ресурсам!"
         tui_warn "Восстанавливаем исходную конфигурацию роутера..."
-        zapret_restore_config "${bak_file}"
-        trap - INT TERM HUP
         tui_info "Рекомендация: проверьте блокировку провайдером DNS (DoH в меню 6)."
         tui_pause
         return 1
@@ -423,8 +356,6 @@ run_strategy_generator() {
                 ;;
             *)
                 tui_info "Откатываемся к исходной конфигурации (baseline)..."
-                zapret_restore_config "${bak_file}"
-                trap - INT TERM HUP
                 tui_pause
                 return 0
                 ;;
@@ -442,30 +373,24 @@ run_strategy_generator() {
     final_opt=$(combo_build_args "${win_d_tls}" "${win_y_tls}" "${win_d_tls}")
     if ! zapret_set_opt "${final_opt}"; then
         tui_error "Не удалось применить итоговую стратегию. Выполняется откат."
-        zapret_restore_config "${bak_file}"
-        trap - INT TERM HUP
         tui_pause
         return 1
     fi
 
-    # Remove temporary backup and clear trap
-    rm -f "${bak_file}" 2>/dev/null
-    trap - INT TERM HUP
+    z2m_transaction_commit
 
     echo ""
     tui_header "✨ Итоговая персональная стратегия сгенерирована!"
     tui_success "Discord профиль : ${win_d_name}"
     tui_success "YouTube профиль : ${win_y_name}"
-    if echo "${final_opt}" | grep -q "quic_vk"; then
-        tui_success "Voice Discord   : QUIC-блок Flowseal (quic_vk:repeats=6)"
-    fi
+    tui_info "Voice Discord   : STUN + IP Discovery (голос проверяется в приложении)"
     tui_info "Конфигурация успешно сохранена и применена."
     echo ""
 
     # Mention that curl checks only TCP/TLS, UDP voice is not tested
     tui_info "Примечание: Проверка curl тестирует только протоколы TCP и TLS."
     tui_info "Голосовая связь Discord использует UDP (STUN / RTP)."
-    tui_info "Для гарантированной работы голосовых звонков примените исправление:"
+    tui_info "Если звонки не подключаются, попробуйте исправление:"
     tui_info "  Главное меню -> Пункт 4 (Исправление Discord Voice / custom.d #50)"
     echo ""
     tui_pause

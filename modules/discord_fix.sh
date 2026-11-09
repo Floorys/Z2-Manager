@@ -1,309 +1,170 @@
 #!/bin/sh
-# ==============================================================================
-# Zapret2-Manager: Discord Voice Fix Module (STUN + IP Discovery)
-# ==============================================================================
-# Resolves "Infinite RTC Connecting" / "No Route" in Discord voice calls.
-# Manages /opt/zapret2/init.d/openwrt/custom.d/50-script.sh (LuCI script #50)
-# ==============================================================================
-
+# shellcheck disable=SC3043
 [ -z "${Z2M_DIR:-}" ] && Z2M_DIR="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
-[ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
-[ -f "${Z2M_DIR}/core/tui.sh" ] && . "${Z2M_DIR}/core/tui.sh"
-[ -f "${Z2M_DIR}/core/probe.sh" ] && . "${Z2M_DIR}/core/probe.sh"
-[ -f "${Z2M_DIR}/core/zapret_service.sh" ] && . "${Z2M_DIR}/core/zapret_service.sh"
+. "${Z2M_DIR}/core/config.sh"
+. "${Z2M_DIR}/core/tui.sh"
+. "${Z2M_DIR}/core/probe.sh"
+. "${Z2M_DIR}/core/zapret_service.sh"
 
 CUSTOM_D_DIR="${ZAPRET2_DIR}/init.d/openwrt/custom.d"
 CUSTOM_SCRIPT_50="${CUSTOM_D_DIR}/50-script.sh"
 
-discord_fix_get_status() {
-    local script_exists=0
-    local has_media=0
-    local has_stun=0
-    local custom_enabled=0
-    local zapret_up=0
-
-    zapret_is_running && zapret_up=1
-
-    if [ -f "${CUSTOM_SCRIPT_50}" ]; then
-        script_exists=1
-        grep -qi "discord_ip_discovery" "${CUSTOM_SCRIPT_50}" 2>/dev/null && has_media=1
-        grep -qi "payload=stun" "${CUSTOM_SCRIPT_50}" 2>/dev/null && has_stun=1
-    fi
-
-    local dis_custom=""
-    if command -v uci >/dev/null 2>&1; then
-        dis_custom="$(uci -q get zapret2.config.DISABLE_CUSTOM)"
-    fi
-    if [ -z "${dis_custom}" ] && [ -f "${ZAPRET2_CONFIG}" ]; then
-        dis_custom="$(grep "^DISABLE_CUSTOM=" "${ZAPRET2_CONFIG}" 2>/dev/null | cut -d'=' -f2 | tr -d '"')"
-    fi
-    [ "${dis_custom}" = "0" ] && custom_enabled=1
-
-    if [ "${script_exists}" -eq 1 ] && [ "${has_media}" -eq 1 ] && [ "${has_stun}" -eq 1 ]; then
-        if [ "${custom_enabled}" -eq 1 ]; then
-            if [ "${zapret_up}" -eq 1 ]; then
-                echo "ACTIVE"
-            else
-                echo "STOPPED"
-            fi
-        else
-            echo "DISABLED_IN_CONFIG"
-        fi
-    elif [ "${script_exists}" -eq 1 ] && [ "${has_stun}" -eq 1 ] && [ "${has_media}" -eq 0 ]; then
-        echo "STUN_ONLY"
-    elif [ "${script_exists}" -eq 1 ] && [ "${has_media}" -eq 1 ] && [ "${has_stun}" -eq 0 ]; then
-        echo "MEDIA_ONLY"
-    elif [ "${script_exists}" -eq 1 ]; then
-        echo "CUSTOM_UNKNOWN"
+discord_fix_owned() {
+    [ -f "${CUSTOM_SCRIPT_50}" ] && [ ! -L "${CUSTOM_SCRIPT_50}" ] || return 1
+    if [ -f "${ZAPRET2_DIR}/.z2m-discord/installed" ]; then
+        cmp -s "${CUSTOM_SCRIPT_50}" "${ZAPRET2_DIR}/.z2m-discord/installed"
     else
-        echo "NOT_INSTALLED"
+        # Recognize only an exact bundled template, including the legacy version.
+        cmp -s "${CUSTOM_SCRIPT_50}" "${Z2M_DIR}/templates/50-script.sh" ||
+            tail -n +2 "${Z2M_DIR}/templates/50-script.sh" | cmp -s - "${CUSTOM_SCRIPT_50}"
+    fi
+}
+
+discord_fix_custom_value() {
+    if command -v uci >/dev/null 2>&1 && [ -f "${UCI_CONFIG}" ]; then
+        uci -q get "${UCI_SECTION}.DISABLE_CUSTOM" || :
+    elif [ -f "${ZAPRET2_CONFIG}" ]; then
+        sed -n 's/^DISABLE_CUSTOM=//p' "${ZAPRET2_CONFIG}" | tr -d '"'
+    fi
+}
+
+discord_fix_set_custom() {
+    local value="$1" tmp
+    if command -v uci >/dev/null 2>&1 && [ -f "${UCI_CONFIG}" ]; then
+        if [ -n "${value}" ]; then
+            uci set "${UCI_SECTION}.DISABLE_CUSTOM=${value}" || return 1
+        else
+            uci -q delete "${UCI_SECTION}.DISABLE_CUSTOM" 2>/dev/null || :
+        fi
+        uci commit zapret2 || return 1
+    fi
+    if [ -f "${ZAPRET2_CONFIG}" ]; then
+        tmp=$(mktemp "${Z2M_TMP}/custom_cfg.XXXXXX") || return 1
+        awk '!/^DISABLE_CUSTOM=/' "${ZAPRET2_CONFIG}" > "${tmp}" || return 1
+        [ -z "${value}" ] || printf 'DISABLE_CUSTOM="%s"\n' "${value}" >> "${tmp}"
+        cat "${tmp}" > "${ZAPRET2_CONFIG}" || return 1
+        rm -f "${tmp}"
+    fi
+}
+
+discord_fix_get_status() {
+    if [ ! -f "${CUSTOM_SCRIPT_50}" ]; then
+        echo NOT_INSTALLED
+    elif ! discord_fix_owned; then
+        echo CUSTOM_UNKNOWN
+    elif [ "$(discord_fix_custom_value)" != 0 ]; then
+        echo DISABLED_IN_CONFIG
+    elif zapret_is_running; then
+        echo ACTIVE
+    else
+        echo STOPPED
     fi
 }
 
 discord_fix_apply() {
+    z2m_run_guarded discord_fix_apply_worker
+}
+
+discord_fix_apply_worker() {
     tui_banner
-    tui_header "🎧 Установка исправления Discord Voice (звонки / RTC)"
-
-    if ! zapret_is_installed; then
-        tui_error "Пакет zapret2 не установлен в системе!"
-        tui_pause
-        return 1
+    tui_header "Установка исправления Discord Voice"
+    zapret_is_installed || { tui_error "Zapret2 не установлен."; return 1; }
+    local tpl="${Z2M_DIR}/templates/50-script.sh" state="${ZAPRET2_DIR}/.z2m-discord" answer f
+    [ -f "${tpl}" ] || { tui_error "Шаблон фикса отсутствует."; return 1; }
+    [ ! -L "${CUSTOM_SCRIPT_50}" ] || {
+        tui_error "Файл #50 — символическая ссылка; автоматическая замена запрещена."; return 1;
+    }
+    for f in "${CUSTOM_D_DIR}/50-stun4all"*.sh "${CUSTOM_D_DIR}/50-discord"*.sh; do
+        [ -f "${f}" ] || continue
+        tui_warn "Возможный конфликт: ${f}. Этот файл не будет удалён."
+        answer=$(tui_prompt "Продолжить с этим скриптом? [y/N]" "N")
+        case "${answer}" in y|Y|yes|YES) ;; *) return 1 ;; esac
+    done
+    if [ -e "${CUSTOM_SCRIPT_50}" ] && ! discord_fix_owned; then
+        tui_warn "Скрипт #50 пользовательский или изменён после установки."
+        answer=$(tui_prompt "Сохранить копию и заменить его? [y/N]" "N")
+        case "${answer}" in y|Y|yes|YES) ;; *) return 1 ;; esac
+        # Do not silently lose a previously saved script on a later overwrite.
+        [ ! -f "${state}/previous-script" ] || {
+            tui_error "Уже есть сохранённый скрипт: ${state}/previous-script. Сначала восстановите его."; return 1;
+        }
     fi
-
-    tui_info "1. Подготовка каталогов custom.d..."
-    mkdir -p "${CUSTOM_D_DIR}" 2>/dev/null
-    mkdir -p "${ZAPRET2_IPSET_DIR}" 2>/dev/null
-
-    # Remove conflicting temporary scripts
-    rm -f "${CUSTOM_D_DIR}/50-script.sh.bak" "${CUSTOM_D_DIR}/50-stun4all"* "${CUSTOM_D_DIR}/50-discord"* 2>/dev/null
-
-    tui_info "2. Запись объединенного скрипта (STUN + IP Discovery) в custom.d script #50..."
-    local tpl="${Z2M_DIR}/templates/50-script.sh"
-    if [ -f "${tpl}" ]; then
-        cp -f "${tpl}" "${CUSTOM_SCRIPT_50}"
-    else
-        cat << 'EOF' > "${CUSTOM_SCRIPT_50}"
-# Discord Voice & Video Fix (STUN + Discord Media IP Discovery)
-# This custom script desyncs both Discord IP Discovery and STUN packets
-# Resolves "Infinite RTC Connecting" / "No Route" in Discord voice calls
-# Compatible with LuCI "custom.d script #50" and OpenWrt 22, 23, 24+
-
-# Can override in config:
-NFQWS_OPT_DESYNC_STUN="${NFQWS_OPT_DESYNC_STUN:---payload=stun --lua-desync=fake:blob=0x00000000000000000000000000000000:repeats=2}"
-NFQWS_OPT_DESYNC_DISCORD_MEDIA="${NFQWS_OPT_DESYNC_DISCORD_MEDIA:---payload=discord_ip_discovery --lua-desync=fake:blob=0x00000000000000000000000000000000:repeats=2}"
-DISCORD_MEDIA_PORT_RANGE="${DISCORD_MEDIA_PORT_RANGE:-50000-65535,19294-19344}"
-
-alloc_dnum DNUM_STUN4ALL
-alloc_qnum QNUM_STUN4ALL
-alloc_dnum DNUM_DISCORD_MEDIA
-alloc_qnum QNUM_DISCORD_MEDIA
-
-zapret_custom_daemons()
-{
-	# $1 - 1 - add, 0 - stop
-	local opt_stun="--qnum=$QNUM_STUN4ALL $NFQWS_OPT_DESYNC_STUN"
-	do_nfqws "$1" "$DNUM_STUN4ALL" "$opt_stun"
-
-	local opt_media="--qnum=$QNUM_DISCORD_MEDIA $NFQWS_OPT_DESYNC_DISCORD_MEDIA"
-	do_nfqws "$1" "$DNUM_DISCORD_MEDIA" "$opt_media"
-}
-
-zapret_custom_firewall()
-{
-	# $1 - 1 - run, 0 - stop
-	local f_stun='-p udp -m u32 --u32'
-	fw_nfqws_post "$1" "$f_stun 0>>22&0x3C@4>>16=28:65535&&0>>22&0x3C@12=0x2112A442&&0>>22&0x3C@8&0xC0000003=0" "$f_stun 44>>16=28:65535&&52=0x2112A442&&48&0xC0000003=0" "$QNUM_STUN4ALL"
-
-	local port_range
-	port_range=$(replace_char - : "$DISCORD_MEDIA_PORT_RANGE")
-	local f_media="-p udp -m multiport --dports $port_range -m u32 --u32"
-	fw_nfqws_post "$1" "$f_media 0>>22&0x3C@4>>16=0x52&&0>>22&0x3C@8=0x00010046&&0>>22&0x3C@16=0&&0>>22&0x3C@76=0" '' "$QNUM_DISCORD_MEDIA"
-}
-
-zapret_custom_firewall_nft()
-{
-	# stop logic is not required
-	local f_stun="udp length >= 28 @ih,32,32 0x2112A442 @ih,0,2 0 @ih,30,2 0"
-	nft_fw_nfqws_post "$f_stun" "$f_stun" "$QNUM_STUN4ALL"
-
-	local f_media="udp dport {$DISCORD_MEDIA_PORT_RANGE} udp length == 82 @ih,0,32 0x00010046 @ih,64,128 0x00000000000000000000000000000000 @ih,192,128 0x00000000000000000000000000000000 @ih,320,128 0x00000000000000000000000000000000 @ih,448,128 0x00000000000000000000000000000000"
-	nft_fw_nfqws_post "$f_media" '' "$QNUM_DISCORD_MEDIA"
-}
-EOF
+    mkdir -p "${CUSTOM_D_DIR}" || return 1
+    if [ ! -d "${state}" ]; then
+        (umask 077; mkdir "${state}") || return 1
+        discord_fix_custom_value > "${state}/previous-disable-custom"
     fi
-    chmod 755 "${CUSTOM_SCRIPT_50}" 2>/dev/null
-
-    tui_info "3. Включение custom.d и настройка портов в UCI..."
-    if command -v uci >/dev/null 2>&1; then
-        uci set zapret2.config.DISABLE_CUSTOM='0'
-        uci set "${UCI_SECTION}.NFQWS2_PORTS_TCP=${DEFAULT_PORTS_TCP}"
-        uci set "${UCI_SECTION}.NFQWS2_PORTS_UDP=${DEFAULT_PORTS_UDP}"
-        if [ -f /etc/config/zapret ]; then
-            uci set zapret.config.DISABLE_CUSTOM='0' 2>/dev/null
-            uci set zapret.config.NFQWS_PORTS_TCP="${DEFAULT_PORTS_TCP}" 2>/dev/null
-            uci set zapret.config.NFQWS_PORTS_UDP="${DEFAULT_PORTS_UDP}" 2>/dev/null
-            uci commit zapret 2>/dev/null
-        fi
-        uci commit zapret2 2>/dev/null
+    if [ -f "${CUSTOM_SCRIPT_50}" ] && ! discord_fix_owned; then
+        cp -p "${CUSTOM_SCRIPT_50}" "${state}/previous-script" || return 1
     fi
-
-    zapret_ensure_full_ports
-
-    tui_info "4. Синхронизация списков доменов Discord..."
-    zapret_sync_hostlists 0
-
-    tui_info "5. Перезапуск службы zapret2..."
-    if ! zapret_restart; then
-        tui_error "Скрипт записан, но службу Zapret2 не удалось перезапустить."
-        tui_pause
-        return 1
-    fi
-
-    sleep 1
-
-    local new_st
-    new_st=$(discord_fix_get_status)
-
-    echo ""
-    if [ "${new_st}" = "ACTIVE" ]; then
-        tui_success "Исправление успешно установлено и активно!"
-        tui_info "В LuCI Web UI скрипт отображается в разделе: Настройки -> custom.d -> custom.d script #50"
-        tui_info "Теперь десинкятся как STUN пакеты, так и Discord IP Discovery (UDP 82)."
-        tui_info "Голосовые каналы и звонки подключаются мгновенно!"
-    else
-        tui_error "Скрипт установлен, но исправление не активно (${new_st})."
-        tui_pause
-        return 1
-    fi
-
+    # Keep the old file in place until its firewall stop hooks have completed.
+    zapret_stop || return 1
+    cp "${tpl}" "${CUSTOM_SCRIPT_50}" && chmod 755 "${CUSTOM_SCRIPT_50}" || return 1
+    cp "${CUSTOM_SCRIPT_50}" "${state}/installed" || return 1
+    discord_fix_set_custom 0 || return 1
+    # Voice interception lives in custom.d; do not reset the user's TCP/UDP ports.
+    zapret_restart || return 1
+    [ "$(discord_fix_get_status)" = ACTIVE ] || return 1
+    z2m_transaction_commit
+    tui_success "Фикс установлен. Пользовательские порты сохранены."
+    tui_info "Проверьте звонок в Discord: TCP/TLS-пробы не проверяют голосовой UDP-поток."
     tui_pause
 }
 
 discord_fix_remove() {
-    tui_banner
-    tui_header "Отключение исправления Discord Voice"
+    z2m_run_guarded discord_fix_remove_worker
+}
 
-    if [ -f "${CUSTOM_SCRIPT_50}" ]; then
-        rm -f "${CUSTOM_SCRIPT_50}" 2>/dev/null
-        tui_info "Скрипт ${CUSTOM_SCRIPT_50} удален."
+discord_fix_remove_worker() {
+    local state="${ZAPRET2_DIR}/.z2m-discord" was_running=0
+    discord_fix_owned || {
+        tui_error "Скрипт #50 не принадлежит менеджеру или был изменён. Он не удалён."; return 1;
+    }
+    zapret_is_running && was_running=1
+    zapret_stop || return 1
+    rm -f "${CUSTOM_SCRIPT_50}" || return 1
+    if [ -f "${state}/previous-script" ]; then
+        cp -p "${state}/previous-script" "${CUSTOM_SCRIPT_50}" || return 1
     fi
-
-    tui_info "Перезапуск zapret2..."
-    if zapret_restart; then
-        tui_success "Исправление отключено."
-    else
-        tui_error "Файл удалён, но Zapret2 не удалось перезапустить."
-        tui_pause
-        return 1
+    if [ -f "${state}/previous-disable-custom" ]; then
+        discord_fix_set_custom "$(cat "${state}/previous-disable-custom")" || return 1
     fi
+    [ "${was_running}" -ne 1 ] || zapret_start || return 1
+    [ ! -d "${state}" ] || rm -r "${state}" || return 1
+    z2m_transaction_commit
+    tui_success "Фикс удалён; прежний скрипт и DISABLE_CUSTOM восстановлены."
     tui_pause
 }
 
 discord_fix_check_connection() {
     tui_banner
-    tui_header "🧪 Проверка серверов Discord (Web, Gateway, Media, CDN)"
-
-    printf "%b%-28s %-20s %-12s%b\n" "${BOLD}" "Домен" "Назначение" "Статус" "${NC}"
-    printf "%b───────────────────────────────────────────────────────────────────%b\n" "${DGRAY}" "${NC}"
-
-    local dc_hosts="discord.com gateway.discord.gg cdn.discordapp.com discord.media status.discord.com"
-
-    for h in ${dc_hosts}; do
-        local cat="Веб-интерфейс"
-        case "${h}" in
-            gateway.discord.gg) cat="Шлюз / Сигналинг" ;;
-            cdn.discordapp.com) cat="Медиа / Аватары" ;;
-            discord.media)      cat="Голосовые сервера" ;;
-            status.discord.com) cat="Статус сервиса" ;;
-        esac
-
-        printf "%-28s %-20s %b[...] Тест%b\r" "${h}" "${cat}" "${YELLOW}" "${NC}"
-
+    tui_header "Проверка серверов Discord (TCP/TLS)"
+    local h
+    for h in discord.com gateway.discord.gg cdn.discordapp.com discord.media status.discord.com; do
         if probe_fast_tls "${h}" 443 2; then
-            printf "%-28s %-20s %b✓ Доступен%b\n" "${h}" "${cat}" "${GREEN}" "${NC}"
+            tui_success "${h}: доступен"
         else
-            printf "%-28s %-20s %b✗ Недоступен%b\n" "${h}" "${cat}" "${RED}" "${NC}"
+            tui_warn "${h}: недоступен"
         fi
     done
-
-    echo ""
-    local st
-    st=$(discord_fix_get_status)
-    printf "  %bСтатус скрипта #50:%b %s\n" "${BOLD}" "${NC}" "${st}"
-    echo ""
-    tui_info "Примечание: голосовой поток проверяется в самом приложении Discord."
-    tui_info "При входе в голосовой канал статус должен сразу меняться с «Подключение к RTC» на «Подключено» (зеленая иконка)."
-
+    tui_info "Статус фикса: $(discord_fix_get_status). Голос проверяйте в приложении Discord."
     tui_pause
 }
 
 run_discord_fix_menu() {
-    while true; do
+    local choice
+    while :; do
         tui_banner
-        tui_header "🎧 Управление голосовым чатом Discord (Voice / Звонки / RTC)"
-
-        local st
-        st=$(discord_fix_get_status)
-
-        local st_text="${RED}Не установлен${NC}"
-        case "${st}" in
-            ACTIVE)
-                st_text="${GREEN}Активен (STUN + Media IP Discovery)${NC}"
-                ;;
-            STOPPED)
-                st_text="${YELLOW}Установлен, но zapret2 остановлен${NC}"
-                ;;
-            DISABLED_IN_CONFIG)
-                st_text="${YELLOW}Установлен, но custom.d отключен в UCI (DISABLE_CUSTOM=1)${NC}"
-                ;;
-            STUN_ONLY)
-                st_text="${RED}Частично (только STUN — звонки зависают в RTC Connecting!)${NC}"
-                ;;
-            MEDIA_ONLY)
-                st_text="${YELLOW}Частично (только Media IP Discovery)${NC}"
-                ;;
-        esac
-
-        printf "  %bТекущее состояние:%b %b\n" "${BOLD}" "${NC}" "${st_text}"
-        printf "  %bФайл скрипта LuCI :%b %b%s%b\n" "${BOLD}" "${NC}" "${CYAN}" "${CUSTOM_SCRIPT_50}" "${NC}"
-        printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
-
-        printf "  1. 🚀 Установить / Обновить исправление Discord Voice (RTC & Звонки)\n"
-        printf "  2. 🧪 Проверить связь с серверами Discord\n"
-        printf "  3. 📄 Посмотреть содержимое скрипта 50-script.sh\n"
-        printf "  4. 🗑️ Удалить исправление\n"
-        printf "  0. ↩️ Назад в главное меню\n\n"
-
-        local choice
-        choice=$(tui_prompt "Выберите действие" "1")
-
+        tui_header "Discord Voice: $(discord_fix_get_status)"
+        printf '  1. Установить / обновить фикс\n  2. Проверить связь\n  3. Посмотреть скрипт #50\n  4. Удалить фикс и восстановить прежний скрипт\n  0. Назад\n'
+        choice=$(tui_prompt "Выберите действие" "0")
         case "${choice}" in
-            1)
-                discord_fix_apply
-                ;;
-            2)
-                discord_fix_check_connection
-                ;;
-            3)
-                tui_banner
-                tui_header "Содержимое ${CUSTOM_SCRIPT_50}"
-                if [ -f "${CUSTOM_SCRIPT_50}" ]; then
-                    cat "${CUSTOM_SCRIPT_50}"
-                else
-                    tui_warn "Файл ${CUSTOM_SCRIPT_50} не существует."
-                fi
-                tui_pause
-                ;;
-            4)
-                discord_fix_remove
-                ;;
-            0)
-                break
-                ;;
-            *)
-                tui_warn "Неверный пункт меню."
-                sleep 1
-                ;;
+            1) discord_fix_apply ;;
+            2) discord_fix_check_connection ;;
+            3) [ ! -f "${CUSTOM_SCRIPT_50}" ] || cat "${CUSTOM_SCRIPT_50}"; tui_pause ;;
+            4) discord_fix_remove ;;
+            0) return 0 ;;
+            *) tui_warn "Неверный пункт меню." ;;
         esac
     done
 }

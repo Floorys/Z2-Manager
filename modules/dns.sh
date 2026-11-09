@@ -112,6 +112,24 @@ _check_dns_poisoning() {
     tui_pause
 }
 
+# Update the primary resolver in place; otherwise use the exact new section ID.
+dns_configure_doh_section() {
+    local bootstrap="$1" url="$2" section
+    if uci -q get 'https-dns-proxy.@https-dns-proxy[0]' >/dev/null 2>&1; then
+        section='https-dns-proxy.@https-dns-proxy[0]'
+    else
+        section=$(uci add https-dns-proxy https-dns-proxy) || return 1
+        [ -n "${section}" ] || return 1
+        section="https-dns-proxy.${section}"
+    fi
+    DNS_DOH_SECTION="${section}"
+    uci set "${section}.bootstrap_dns=${bootstrap}" &&
+        uci set "${section}.resolver_url=${url}" &&
+        uci set "${section}.url_prefix=${url}" &&
+        uci set "${section}.listen_addr=127.0.0.1" &&
+        uci set "${section}.listen_port=5053"
+}
+
 _setup_doh() {
     tui_banner
     tui_header "Выбор провайдера DNS-over-HTTPS (DoH)"
@@ -226,13 +244,7 @@ _setup_doh() {
 
         # Конфигурация https-dns-proxy
         local dns_config_ok=1
-        uci -q delete https-dns-proxy.@https-dns-proxy[0] 2>/dev/null
-        uci add https-dns-proxy https-dns-proxy >/dev/null 2>&1 || dns_config_ok=0
-        uci set https-dns-proxy.@https-dns-proxy[0].bootstrap_dns="${bootstrap_ips}" 2>/dev/null || dns_config_ok=0
-        uci set https-dns-proxy.@https-dns-proxy[0].resolver_url="${doh_url}" 2>/dev/null || dns_config_ok=0
-        uci set https-dns-proxy.@https-dns-proxy[0].url_prefix="${doh_url}" 2>/dev/null || dns_config_ok=0
-        uci set https-dns-proxy.@https-dns-proxy[0].listen_addr="127.0.0.1" 2>/dev/null || dns_config_ok=0
-        uci set https-dns-proxy.@https-dns-proxy[0].listen_port="5053" 2>/dev/null || dns_config_ok=0
+        dns_configure_doh_section "${bootstrap_ips}" "${doh_url}" || dns_config_ok=0
         uci commit https-dns-proxy 2>/dev/null || dns_config_ok=0
 
         /etc/init.d/https-dns-proxy enable >/dev/null 2>&1
@@ -264,7 +276,7 @@ _setup_doh() {
                 uci import https-dns-proxy < "${doh_backup}" 2>/dev/null
                 uci commit https-dns-proxy 2>/dev/null
             else
-                uci -q delete 'https-dns-proxy.@https-dns-proxy[0]' 2>/dev/null
+                [ -z "${DNS_DOH_SECTION:-}" ] || uci -q delete "${DNS_DOH_SECTION}" 2>/dev/null
                 uci commit https-dns-proxy 2>/dev/null
             fi
             if [ "${doh_was_running}" -eq 1 ]; then

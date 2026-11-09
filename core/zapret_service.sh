@@ -74,7 +74,7 @@ zapret_get_installed_version() {
 zapret_start() {
     if [ -f "${ZAPRET2_SYNC}" ]; then
         chmod +x "${ZAPRET2_SYNC}" 2>/dev/null
-        "${ZAPRET2_SYNC}" >/dev/null 2>&1
+        "${ZAPRET2_SYNC}" >/dev/null 2>&1 || return 1
     fi
 
     local init_script=""
@@ -85,7 +85,7 @@ zapret_start() {
     fi
 
     if [ -n "${init_script}" ]; then
-        "${init_script}" start >/dev/null 2>&1
+        "${init_script}" start >/dev/null 2>&1 || return 1
     fi
 
     # Poll for running status up to 5 seconds
@@ -109,7 +109,7 @@ zapret_stop() {
     fi
 
     if [ -n "${init_script}" ]; then
-        "${init_script}" stop >/dev/null 2>&1
+        "${init_script}" stop >/dev/null 2>&1 || return 1
     fi
 
     # Poll for stopped status up to 5 seconds (success = process is gone)
@@ -125,10 +125,9 @@ zapret_stop() {
 }
 
 zapret_restart() {
-    zapret_repair_config
     if [ -f "${ZAPRET2_SYNC}" ]; then
         chmod +x "${ZAPRET2_SYNC}" 2>/dev/null
-        "${ZAPRET2_SYNC}" >/dev/null 2>&1
+        "${ZAPRET2_SYNC}" >/dev/null 2>&1 || return 1
     fi
 
     local init_script=""
@@ -139,7 +138,7 @@ zapret_restart() {
     fi
 
     if [ -n "${init_script}" ]; then
-        "${init_script}" restart >/dev/null 2>&1
+        "${init_script}" restart >/dev/null 2>&1 || return 1
     fi
 
     # Poll for running status up to 5 seconds
@@ -227,58 +226,146 @@ zapret_write_opt_to_config() {
     return "${write_rc}"
 }
 
-# Create a full UCI backup or config file backup
+# Snapshot both representations and the original service state. Never guess the
+# backup format from its contents: arbitrary user options can contain any text.
 zapret_backup_config() {
     z2m_prepare_runtime || return 1
     local backup_file
-    backup_file=$(mktemp "${Z2M_TMP}/z2m_uci_backup.XXXXXX") || return 1
+    backup_file=$(mktemp -d "${Z2M_TMP}/snapshot.XXXXXX") || return 1
+    zapret_status > "${backup_file}/status"
     if command -v uci >/dev/null 2>&1 && [ -f "${UCI_CONFIG}" ]; then
-        if ! uci export zapret2 > "${backup_file}" 2>/dev/null; then
-            rm -f "${backup_file}" 2>/dev/null
-            return 1
-        fi
-    elif [ -f "${ZAPRET2_CONFIG}" ]; then
-        if ! cp -f "${ZAPRET2_CONFIG}" "${backup_file}" 2>/dev/null; then
-            rm -f "${backup_file}" 2>/dev/null
-            return 1
-        fi
-    else
-        if ! zapret_get_opt > "${backup_file}" || [ ! -s "${backup_file}" ]; then
-            rm -f "${backup_file}" 2>/dev/null
+        if ! uci export zapret2 > "${backup_file}/uci" 2>/dev/null; then
+            rm -r "${backup_file}"
             return 1
         fi
     fi
-    [ -s "${backup_file}" ] || { rm -f "${backup_file}"; return 1; }
+    if [ -f "${ZAPRET2_CONFIG}" ]; then
+        cp -p "${ZAPRET2_CONFIG}" "${backup_file}/config" || { rm -r "${backup_file}"; return 1; }
+    fi
+    [ -f "${backup_file}/uci" ] || [ -f "${backup_file}/config" ] || {
+        rm -r "${backup_file}"; return 1;
+    }
+    local custom="${ZAPRET2_DIR}/init.d/openwrt/custom.d/50-script.sh"
+    if [ -e "${custom}" ] || [ -L "${custom}" ]; then
+        cp -Pp "${custom}" "${backup_file}/custom" || { rm -r "${backup_file}"; return 1; }
+    fi
+    if [ -d "${ZAPRET2_DIR}/.z2m-discord" ]; then
+        cp -Rp "${ZAPRET2_DIR}/.z2m-discord" "${backup_file}/discord-state" || {
+            rm -r "${backup_file}"; return 1;
+        }
+    fi
     echo "${backup_file}"
 }
 
-# Restore full UCI configuration or config file from backup
+# Stop using the current custom script before replacing it, so its firewall
+# cleanup still runs. Keep the snapshot if any part of recovery fails.
 zapret_restore_config() {
     local backup_file="$1"
-    [ -f "${backup_file}" ] && [ -s "${backup_file}" ] || return 1
+    [ -d "${backup_file}" ] && [ -f "${backup_file}/status" ] || return 1
     local rc=0
-    if command -v uci >/dev/null 2>&1 && grep -q "package zapret2" "${backup_file}" 2>/dev/null; then
-            uci import zapret2 < "${backup_file}" 2>/dev/null || rc=1
-            uci commit zapret2 2>/dev/null || rc=1
-            if [ -f "${ZAPRET2_SYNC}" ]; then
-                "${ZAPRET2_SYNC}" >/dev/null 2>&1 || rc=1
-            fi
-            # sync_config.sh is responsible for regenerating the flat config.
-            # Rewriting the UCI value here would corrupt legitimate literal quotes.
-            zapret_restart || rc=1
-    elif [ -f "${ZAPRET2_CONFIG}" ] && grep -q "^NFQWS2_OPT=" "${backup_file}" 2>/dev/null; then
-            cat "${backup_file}" > "${ZAPRET2_CONFIG}" || rc=1
-            zapret_restart || rc=1
+    zapret_stop || rc=1
+    if [ -f "${backup_file}/uci" ]; then
+        uci import zapret2 < "${backup_file}/uci" 2>/dev/null || rc=1
+        uci commit zapret2 2>/dev/null || rc=1
+    fi
+    if [ -f "${backup_file}/config" ]; then
+        cp -p "${backup_file}/config" "${ZAPRET2_CONFIG}" || rc=1
     else
-            local saved_opt
-            saved_opt=$(cat "${backup_file}")
-            zapret_set_opt "${saved_opt}" || rc=1
+        rm -f "${ZAPRET2_CONFIG}" || rc=1
+    fi
+    local custom="${ZAPRET2_DIR}/init.d/openwrt/custom.d/50-script.sh"
+    rm -f "${custom}" || rc=1
+    if [ -e "${backup_file}/custom" ] || [ -L "${backup_file}/custom" ]; then
+        mkdir -p "${custom%/*}" && cp -Pp "${backup_file}/custom" "${custom}" || rc=1
+    fi
+    if [ -d "${ZAPRET2_DIR}/.z2m-discord" ]; then
+        rm -r "${ZAPRET2_DIR}/.z2m-discord" || rc=1
+    fi
+    if [ -d "${backup_file}/discord-state" ]; then
+        cp -Rp "${backup_file}/discord-state" "${ZAPRET2_DIR}/.z2m-discord" || rc=1
+    fi
+    if [ "$(cat "${backup_file}/status")" = running ]; then
+        zapret_start || rc=1
+    fi
+    # sync_config may regenerate this file during start. Restore exact bytes too.
+    if [ -f "${backup_file}/config" ]; then
+        cp -p "${backup_file}/config" "${ZAPRET2_CONFIG}" || rc=1
     fi
     if [ "${rc}" -eq 0 ]; then
-        rm -f "${backup_file}" 2>/dev/null
+        rm -r "${backup_file}"
         return 0
     fi
+    printf 'Откат не завершён. Резервная копия: %s\n' "${backup_file}" >&2
     return 1
+}
+
+# One worker per workflow, never nested workers. The parent forwards signals and
+# waits for EXIT recovery to finish before returning to the interactive menu.
+# A signal exits the worker, rather than returning into a mutating function.
+z2m_run_guarded() {
+    [ "${Z2M_GUARDED:-0}" = 1 ] && { "$@"; return $?; }
+    z2m_prepare_runtime || return 1
+    local runtime="${Z2M_TMP}" saved_traps worker rc signal_rc=0 backup work
+    saved_traps=$(trap)
+    mkdir "${runtime}/operation.lock" 2>/dev/null || {
+        printf 'Другая операция уже выполняется: %s/operation.lock\n' "${runtime}" >&2
+        return 1
+    }
+    work=$(mktemp -d "${runtime}/operation.XXXXXX") || {
+        rmdir "${runtime}/operation.lock"; return 1;
+    }
+    local Z2M_TMP="${work}"
+    backup=$(zapret_backup_config) || {
+        rmdir "${work}" "${runtime}/operation.lock"; return 1;
+    }
+    trap 'signal_rc=130; [ -z "${worker:-}" ] || kill -TERM "${worker}" 2>/dev/null' INT
+    trap 'signal_rc=143; [ -z "${worker:-}" ] || kill -TERM "${worker}" 2>/dev/null' TERM
+    trap 'signal_rc=129; [ -z "${worker:-}" ] || kill -HUP "${worker}" 2>/dev/null' HUP
+    (
+        Z2M_GUARDED=1
+        Z2M_TRANSACTION_COMMITTED=0
+        trap 'exit 143' TERM
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'z2m_guard_finish "$?"' EXIT
+        "$@"
+        exit $?
+    ) <&9 &
+    worker=$!
+    [ "${signal_rc}" -eq 0 ] || kill -TERM "${worker}" 2>/dev/null
+    # wait can itself be interrupted. Do not let the parent resume early.
+    while :; do
+        wait "${worker}"
+        rc=$?
+        kill -0 "${worker}" 2>/dev/null || break
+    done
+    trap - INT TERM HUP
+    eval "${saved_traps}"
+    if [ -f "${work}/recovery-failed" ]; then
+        rc=1
+    else
+        rm -r "${work}"
+        [ "${signal_rc}" -eq 0 ] || rc="${signal_rc}"
+    fi
+    rmdir "${runtime}/operation.lock"
+    return "${rc}"
+} 9<&0
+
+z2m_guard_finish() {
+    local rc="$1"
+    trap - EXIT
+    trap '' INT TERM HUP
+    if [ "${Z2M_TRANSACTION_COMMITTED:-0}" -ne 1 ]; then
+        if ! zapret_restore_config "${backup}"; then
+            : > "${Z2M_TMP}/recovery-failed"
+            rc=1
+        fi
+    fi
+    exit "${rc}"
+}
+
+z2m_transaction_commit() {
+    Z2M_TRANSACTION_COMMITTED=1
 }
 
 # Repair corrupted /opt/zapret2/config caused by unescaped nested double quotes
@@ -320,6 +407,28 @@ zapret_get_ports_udp() {
 }
 
 zapret_set_ports() {
+    zapret_validate_ports "${1:-${DEFAULT_PORTS_TCP}}" || return 2
+    zapret_validate_ports "${2:-${DEFAULT_PORTS_UDP}}" || return 2
+    if [ "${Z2M_GUARDED:-0}" != 1 ]; then
+        z2m_run_guarded zapret_apply_ports "$@"
+        return $?
+    fi
+    local ports_backup
+    ports_backup=$(zapret_backup_config) || return 1
+    if zapret_set_ports_raw "$@"; then
+        rm -r "${ports_backup}"
+        return 0
+    fi
+    zapret_restore_config "${ports_backup}" || exit 1
+    return 1
+}
+
+zapret_apply_ports() {
+    zapret_set_ports "$@" || return $?
+    z2m_transaction_commit
+}
+
+zapret_set_ports_raw() {
     local tcp_ports="$1"
     local udp_ports="$2"
 
@@ -331,15 +440,10 @@ zapret_set_ports() {
 
     local rc=0 wrote=0
 
-    if command -v uci >/dev/null 2>&1; then
+    if command -v uci >/dev/null 2>&1 && [ -f "${UCI_CONFIG}" ]; then
         uci set "${UCI_SECTION}.NFQWS2_PORTS_TCP=${tcp_ports}" || rc=1
         uci set "${UCI_SECTION}.NFQWS2_PORTS_UDP=${udp_ports}" || rc=1
         wrote=1
-        if [ -f /etc/config/zapret ]; then
-            uci set zapret.config.NFQWS_PORTS_TCP="${tcp_ports}" 2>/dev/null
-            uci set zapret.config.NFQWS_PORTS_UDP="${udp_ports}" 2>/dev/null
-            uci commit zapret 2>/dev/null
-        fi
         uci commit zapret2 2>/dev/null || rc=1
     fi
 
@@ -409,15 +513,10 @@ zapret_ensure_full_ports() {
     fi
 
     if [ "${changed}" -eq 1 ]; then
-        if command -v uci >/dev/null 2>&1; then
+        if command -v uci >/dev/null 2>&1 && [ -f "${UCI_CONFIG}" ]; then
             uci set "${UCI_SECTION}.NFQWS2_PORTS_TCP=${cur_tcp}" || rc=1
             uci set "${UCI_SECTION}.NFQWS2_PORTS_UDP=${cur_udp}" || rc=1
             wrote=1
-            if [ -f /etc/config/zapret ]; then
-                uci set zapret.config.NFQWS_PORTS_TCP="${cur_tcp}" 2>/dev/null
-                uci set zapret.config.NFQWS_PORTS_UDP="${cur_udp}" 2>/dev/null
-                uci commit zapret 2>/dev/null
-            fi
             uci commit zapret2 2>/dev/null || rc=1
         fi
         if [ -f "${ZAPRET2_CONFIG}" ]; then
@@ -453,6 +552,28 @@ zapret_ensure_full_ports() {
 # Apply new NFQWS2_OPT to OpenWrt UCI and restart service
 # Safely writes without sed corruption (&, quotes, slashes) and pauses for stabilization
 zapret_set_opt() {
+    [ -n "${1:-}" ] || return 2
+    case "$1" in *\"*) return 2 ;; esac
+    if [ "${Z2M_GUARDED:-0}" != 1 ]; then
+        z2m_run_guarded zapret_apply_opt "$@"
+        return $?
+    fi
+    local opt_backup
+    opt_backup=$(zapret_backup_config) || return 1
+    if zapret_set_opt_raw "$@"; then
+        rm -r "${opt_backup}"
+        return 0
+    fi
+    zapret_restore_config "${opt_backup}" || exit 1
+    return 1
+}
+
+zapret_apply_opt() {
+    zapret_set_opt "$@" || return $?
+    z2m_transaction_commit
+}
+
+zapret_set_opt_raw() {
     local new_opt="$1"
     case "${new_opt}" in
         *\"*) return 2 ;;
@@ -463,7 +584,7 @@ zapret_set_opt() {
     # Automatically ensure full ports are active so Discord and Web traffic are intercepted
     zapret_ensure_full_ports || return 1
 
-    if command -v uci >/dev/null 2>&1; then
+    if command -v uci >/dev/null 2>&1 && [ -f "${UCI_CONFIG}" ]; then
         uci set "${UCI_SECTION}.NFQWS2_ENABLE=1" || rc=1
         uci set "${UCI_SECTION}.NFQWS2_OPT=${new_opt}" || rc=1
         uci commit zapret2 2>/dev/null || rc=1
@@ -485,12 +606,12 @@ zapret_sync_fake_blobs() {
     local src_dir="${Z2M_DIR}/fake"
     local dst_dir="${ZAPRET2_FAKE_DIR}"
 
-    mkdir -p "${dst_dir}" 2>/dev/null
+    mkdir -p "${dst_dir}" 2>/dev/null || return 1
 
     if [ -d "${src_dir}" ]; then
         for f in "${src_dir}"/*.bin; do
             [ -f "${f}" ] || continue
-            cp -f "${f}" "${dst_dir}/" 2>/dev/null
+            cp -f "${f}" "${dst_dir}/" 2>/dev/null || return 1
         done
         chmod 644 "${dst_dir}"/*.bin 2>/dev/null
     fi
@@ -502,13 +623,13 @@ zapret_sync_hostlists() {
     local dst_dir="${ZAPRET2_IPSET_DIR}"
     local force="${1:-0}"
 
-    mkdir -p "${dst_dir}" 2>/dev/null
+    mkdir -p "${dst_dir}" 2>/dev/null || return 1
 
     if [ -d "${src_dir}" ]; then
         for f in "${src_dir}"/*.txt; do
             [ -f "${f}" ] || continue
             [ "${force}" = "1" ] || [ ! -f "${dst_dir}/${f##*/}" ] || continue
-            cp -f "${f}" "${dst_dir}/" 2>/dev/null
+            cp -f "${f}" "${dst_dir}/" 2>/dev/null || return 1
         done
         chmod 644 "${dst_dir}"/*.txt 2>/dev/null
     fi
@@ -521,7 +642,8 @@ zapret_sync_custom_scripts() {
 
     mkdir -p "${dst_dir}" 2>/dev/null
 
-    if [ -f "${src_file}" ]; then
+    # Installation/bootstrap must never replace an existing user script.
+    if [ -f "${src_file}" ] && [ ! -e "${dst_dir}/50-script.sh" ] && [ ! -L "${dst_dir}/50-script.sh" ]; then
         cp -f "${src_file}" "${dst_dir}/50-script.sh" 2>/dev/null
         chmod 755 "${dst_dir}/50-script.sh" 2>/dev/null
     fi

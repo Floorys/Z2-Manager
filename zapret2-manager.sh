@@ -81,8 +81,6 @@ unset _mod
 
 # Task 2: Isolated bootstrap routine (repair config & sync blobs across whole fake/ directory)
 z2m_bootstrap() {
-    zapret_repair_config
-
     # Check all fake blobs from fake/ directory rather than just one single file
     local missing_blob=0 missing_list=0
     if [ -d "${Z2M_DIR}/fake" ] && [ -d "${ZAPRET2_DIR}" ]; then
