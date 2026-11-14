@@ -24,7 +24,7 @@ run_test_discord_only() {
 catalog_measure() {
     local first second
     first=$(probe_host_list "$1")
-    sleep 1
+    sleep "${Z2M_PROBE_REPEAT_DELAY:-1}"
     second=$(probe_host_list "$1")
     printf '%s\n%s\n' "${first}" "${second}" | awk '
         { ok += $1; total += $2; score += $3; maximum += $4 }
@@ -40,14 +40,18 @@ catalog_autoselect() {
         tui_error "Пакет zapret2 не установлен!"
         return 1
     fi
+    if ! probe_check_deps; then
+        tui_error "Не найдены curl или wget — проверка доступа в интернет невозможна!"
+        return 1
+    fi
     zapret_sync_fake_blobs || return 1
     zapret_sync_hostlists 0 || return 1
 
     local baseline result base_score base_fail
     tui_info "Замер текущей конфигурации теми же пробами (2 повтора)..."
     baseline=$(catalog_measure "${hosts}")
-    base_score=$(echo "${baseline}" | awk '{print $3}')
-    base_fail=$(echo "${baseline}" | awk '{print $2-$1}')
+    base_score=$(echo "${baseline}" | awk '{print $3 + 0}')
+    base_fail=$(echo "${baseline}" | awk '{print ($2 - $1) + 0}')
     tui_info "Baseline: ${base_score}, неуспешных проверок: ${base_fail}"
     tui_print_result_table_header
 
@@ -56,16 +60,17 @@ catalog_autoselect() {
     while [ "${i}" -le "${CATALOG_COUNT}" ]; do
         name=$(catalog_get_name "${i}")
         opt=$(catalog_get_opt "${i}")
+        printf "%b⏳ Тест: %s [%s/%s]%b\r" "${YELLOW}" "$(printf "%.30s" "${name}")" "${i}" "${CATALOG_COUNT}" "${NC}"
         if [ -z "${opt}" ] || ! zapret_set_opt "${opt}"; then
             tui_warn "${name}: не удалось применить; предыдущая конфигурация восстановлена."
             i=$((i + 1))
             continue
         fi
         result=$(catalog_measure "${hosts}")
-        ok=$(echo "${result}" | awk '{print $1}')
-        total=$(echo "${result}" | awk '{print $2}')
-        score=$(echo "${result}" | awk '{print $3}')
-        maximum=$(echo "${result}" | awk '{print $4}')
+        ok=$(echo "${result}" | awk '{print $1 + 0}')
+        total=$(echo "${result}" | awk '{print $2 + 0}')
+        score=$(echo "${result}" | awk '{print $3 + 0}')
+        maximum=$(echo "${result}" | awk '{print $4 + 0}')
         fail=$((total - ok))
         tui_print_result_row "${name}" "${ok}" "${fail}" "${total}"
         if [ "${score}" -gt "${best_score}" ] || {
@@ -104,13 +109,22 @@ run_test_current_strategy() {
     tui_header "Проверка текущей стратегии"
     zapret_is_running || tui_warn "Служба zapret2 остановлена."
     tui_info "Параметры: $(zapret_get_opt)"
-    printf '%-24s %-18s %-12s %-12s\n' "Хост" "Категория" "HTTP Доступ" "TLS"
-    local h http tls
+    if ! probe_check_deps; then
+        tui_error "Не найдены curl или wget — проверка доступа в интернет невозможна!"
+        tui_pause
+        return 1
+    fi
+    tui_info "Все домены опрашиваются параллельно двумя батчами (HTTP и TLS 1.2)..."
+    printf '%-28s %-20s %-12s %-12s\n' "Хост" "Категория" "HTTP Доступ" "TLS 1.2"
+    local http_map tls_map h http tls
+    http_map=$(probe_hosts_map "${DIAGNOSTIC_HOSTS}")
+    tls_map=$(probe_hosts_map "${DIAGNOSTIC_HOSTS}" "${Z2M_PROBE_TIMEOUT:-2}" tls12)
     for h in ${DIAGNOSTIC_HOSTS}; do
-        http="Блок"; tls="Сбой"
-        probe_http_reach "${h}" 2 && http="OK"
-        probe_fast_tls "${h}" 443 2 && tls="OK"
-        printf '%-24s %-18s %-12s %-12s\n' "${h}" "$(probe_get_host_category "${h}")" "${http}" "${tls}"
+        http=$(echo "${http_map}" | awk -v h="${h}" '$1 == h { print $2 }')
+        tls=$(echo "${tls_map}" | awk -v h="${h}" '$1 == h { print $2 }')
+        http="Блок"; [ "${http}" = "1" ] && http="OK"
+        tls="Сбой"; [ "${tls}" = "1" ] && tls="OK"
+        printf '%-28s %-20s %-12s %-12s\n' "${h}" "$(probe_get_host_category "${h}")" "${http}" "${tls}"
     done
     tui_pause
 }

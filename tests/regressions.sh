@@ -2,6 +2,7 @@
 # Sourced by run.sh. Every scenario runs in a subshell and only touches TMP_ROOT.
 . "${ROOT}/modules/autoselect.sh"
 . "${ROOT}/modules/generator.sh"
+. "${ROOT}/modules/generator_dynamic.sh"
 . "${ROOT}/modules/discord_fix.sh"
 . "${ROOT}/modules/dns.sh"
 
@@ -248,6 +249,9 @@ generator_all_pairs() (
     combo_build_single_test_args() { echo "$1"; }
     # Do not allow Pass 1 to claim a perfect universal candidate.
     probe_fast_tls() { return 1; }
+    probe_http_reach() {
+        case "$1" in discord.com|www.youtube.com) return 0 ;; *) return 1 ;; esac
+    }
     probe_host_list() {
         case "$(zapret_get_opt)" in
             pair:c3:c3) echo '2 3 10 15' ;;
@@ -260,6 +264,164 @@ generator_all_pairs() (
         [ "$(cat "${CASE_DIR}/restarts")" -eq 13 ]
 )
 check "generator tests all nine pairs including the third Discord candidate" generator_all_pairs
+
+# ---------------------------------------------------------------------------
+# Concurrent probing engine
+# ---------------------------------------------------------------------------
+
+probe_parallel_counts() (
+    Z2M_TMP="${TMP_ROOT}/runtime"
+    FAKE_HTTP_CODE=200 FAKE_BODY=clean
+    export FAKE_HTTP_CODE FAKE_BODY
+    [ "$(probe_host_list 'a.example.org b.example.org c.example.org')" = "3 3 15 15" ]
+)
+check "parallel probe host list aggregates every host" probe_parallel_counts
+
+probe_parallel_fails_closed() (
+    Z2M_TMP="${TMP_ROOT}/runtime"
+    FAKE_HTTP_CODE=451 FAKE_BODY=clean
+    export FAKE_HTTP_CODE FAKE_BODY
+    [ "$(probe_host_list 'a.example.org b.example.org')" = "0 2 0 10" ]
+)
+check "parallel probe reports blocked hosts as failures" probe_parallel_fails_closed
+
+probe_sequential_fallback() (
+    Z2M_TMP="${TMP_ROOT}/runtime"
+    Z2M_PROBE_PARALLEL=0
+    FAKE_HTTP_CODE=200 FAKE_BODY=clean
+    export FAKE_HTTP_CODE FAKE_BODY
+    [ "$(probe_host_list 'a.example.org b.example.org')" = "2 2 10 10" ]
+)
+check "sequential probe fallback keeps the same output format" probe_sequential_fallback
+
+probe_parallel_is_concurrent() (
+    Z2M_TMP="${TMP_ROOT}/runtime"
+    PROBE_SLEEP=1 FAKE_HTTP_CODE=200 FAKE_BODY=clean
+    export PROBE_SLEEP FAKE_HTTP_CODE FAKE_BODY
+    local start end
+    start=$(date +%s)
+    probe_host_list 'a.example.org b.example.org c.example.org' > /dev/null
+    end=$(date +%s)
+    [ $(( end - start )) -le 2 ]
+)
+check "parallel probes overlap instead of queueing" probe_parallel_is_concurrent
+
+probe_lists_two_concurrent() (
+    Z2M_TMP="${TMP_ROOT}/runtime"
+    FAKE_HTTP_CODE=200 FAKE_BODY=clean
+    export FAKE_HTTP_CODE FAKE_BODY
+    local out
+    out=$(probe_lists2 'a.example.org b.example.org' 'c.example.org')
+    [ "$(echo "${out}" | sed -n 1p)" = "2 2 10 10" ] &&
+        [ "$(echo "${out}" | sed -n 2p)" = "1 1 5 5" ]
+)
+check "probe_lists2 measures two host lists concurrently" probe_lists_two_concurrent
+
+# ---------------------------------------------------------------------------
+# Dynamic strategy generator (real parameter search)
+# ---------------------------------------------------------------------------
+
+dynamic_space_generation() (
+    local f1="${TMP_ROOT}/dyn_s1" f2="${TMP_ROOT}/dyn_s2"
+    rm -f "${f1}" "${f2}"
+    dyn_build_stage1 "${f1}" || return 1
+    [ "$(wc -l < "${f1}" | tr -d ' ')" -ge 19 ] || return 1
+    awk -F'|' 'NF != 2 || $2 !~ /--lua-desync=/ { bad = 1 } END { exit bad ? 1 : 0 }' "${f1}" || return 1
+    case "$(cat "${f1}")" in *\"*) return 1 ;; esac
+    # Refine the pure-fake class (6) and the combined fake+split class (14).
+    dyn_build_stage2 "${f2}" "${f1}" 6 14 || return 1
+    [ "$(wc -l < "${f2}" | tr -d ' ')" -ge 4 ] || return 1
+    awk -F'|' 'NF != 2 || $2 !~ /--lua-desync=/ { bad = 1 } END { exit bad ? 1 : 0 }' "${f2}" || return 1
+    if awk -F'|' '{ print $2 }' "${f1}" "${f2}" | sort | uniq -d | grep -q .; then
+        return 1
+    fi
+    return 0
+)
+check "dynamic space generates valid unique bundles" dynamic_space_generation
+
+dynamic_fixture() {
+    dyn_build_stage1() { printf 'A|tlsA\nB|tlsB\n' > "$1"; }
+    dyn_build_stage2() { printf 'C|tlsC\n' > "$1"; }
+    combo_build_single_test_args() { echo "single:$1"; }
+    combo_build_args() { echo "pair:$1:$2"; }
+    probe_host_list() {
+        if grep -q 'NFQWS2_OPT="original"' "${ZAPRET2_CONFIG}"; then
+            echo '0 3 0 15'
+        else
+            echo '3 3 15 15'
+        fi
+    }
+}
+
+dynamic_generator_flow() (
+    fixture
+    dynamic_fixture
+    run_strategy_generator_dynamic >/dev/null 2>&1 &&
+        [ "$(zapret_get_opt)" = "pair:tlsC:tlsC" ] &&
+        [ "$(cat "${CASE_DIR}/restarts")" -eq 5 ]
+)
+check "dynamic generator applies the best generated pair and commits" dynamic_generator_flow
+
+dynamic_cancel_workflow() (
+    fixture
+    dynamic_fixture
+    SIGNAL_AT="$1" SIGNAL_NAME="${2:-TERM}"
+    run_strategy_generator_dynamic >/dev/null 2>&1
+    local rc=$?
+    case "${2:-TERM}" in
+        INT) [ "${rc}" -eq 130 ] ;;
+        HUP) [ "${rc}" -eq 129 ] ;;
+        *) [ "${rc}" -eq 143 ] ;;
+    esac || return 1
+    cmp -s "${ZAPRET2_CONFIG}" "${CASE_DIR}/original" &&
+        [ "$(cat "${CASE_DIR}/status")" = running ] &&
+        [ ! -d "${Z2M_TMP}/operation.lock" ]
+)
+check "dynamic generator: signal during stage 1 rolls back" dynamic_cancel_workflow 2
+check "dynamic generator: signal during final apply rolls back" dynamic_cancel_workflow 5
+check "dynamic generator: Ctrl+C returns 130 after recovery" dynamic_cancel_workflow 2 INT
+
+dynamic_failed_final_apply() (
+    fixture
+    dynamic_fixture
+    FAIL_AT=5
+    ! run_strategy_generator_dynamic >/dev/null 2>&1 &&
+        cmp -s "${ZAPRET2_CONFIG}" "${CASE_DIR}/original"
+)
+check "dynamic generator final restart failure restores the original config" dynamic_failed_final_apply
+
+dynamic_keeps_perfect_baseline() (
+    fixture
+    dynamic_fixture
+    probe_host_list() {
+        if grep -q 'NFQWS2_OPT="original"' "${ZAPRET2_CONFIG}"; then
+            echo '3 3 15 15'
+        else
+            echo '0 3 0 15'
+        fi
+    }
+    run_strategy_generator_dynamic >/dev/null 2>&1 &&
+        [ "$(cat "${CASE_DIR}/restarts")" -eq 0 ] &&
+        cmp -s "${ZAPRET2_CONFIG}" "${CASE_DIR}/original"
+)
+check "dynamic generator keeps a perfect baseline without restarts" dynamic_keeps_perfect_baseline
+
+dynamic_keeps_baseline_when_worse() (
+    fixture
+    dynamic_fixture
+    probe_host_list() {
+        if grep -q 'NFQWS2_OPT="original"' "${ZAPRET2_CONFIG}"; then
+            echo '2 3 10 15'
+        else
+            echo '1 3 5 15'
+        fi
+    }
+    run_strategy_generator_dynamic >/dev/null 2>&1 &&
+        cmp -s "${ZAPRET2_CONFIG}" "${CASE_DIR}/original"
+)
+check "dynamic generator keeps the baseline when the search is not better" dynamic_keeps_baseline_when_worse
+
+
 
 discord_does_not_delete_foreign() (
     fixture

@@ -4,7 +4,7 @@
 # Zapret2-Manager: Global Configuration & Environment Constants
 # ==============================================================================
 
-Z2M_VERSION="1.3.1"
+Z2M_VERSION="1.4.0"
 Z2M_APP_NAME="Zapret2-Manager"
 Z2M_GITHUB_REPO="Floorys/Z2-Manager"
 
@@ -81,6 +81,16 @@ z2m_prepare_runtime() {
 
 # Network test interface (optional: e.g. "br-lan" or LAN IP)
 CURL_INTERFACE="${CURL_INTERFACE:-}"
+
+# --- Performance tuning (override via environment if needed) ---
+# Probe timeout (seconds) for a single host check.
+Z2M_PROBE_TIMEOUT="${Z2M_PROBE_TIMEOUT:-2}"
+# Probe hosts concurrently (1) or strictly sequentially (0) for very weak routers.
+Z2M_PROBE_PARALLEL="${Z2M_PROBE_PARALLEL:-1}"
+# Pause (seconds) between measurement repeats inside generator/autoselect.
+Z2M_PROBE_REPEAT_DELAY="${Z2M_PROBE_REPEAT_DELAY:-1}"
+# Pause (seconds) after a service restart before probing the new strategy.
+Z2M_RESTART_SETTLE="${Z2M_RESTART_SETTLE:-1}"
 
 # Probing target endpoints (Expanded suite inspired by StressOzz)
 DISCORD_PROBE_HOSTS="discord.com gateway.discord.gg cdn.discordapp.com"

@@ -88,7 +88,13 @@ run_diagnostics() {
         fi
 
         local dpi_verdict
-        dpi_verdict=$(probe_dpi_verdict "${host}")
+        if [ "${is_ok}" -eq 1 ]; then
+            # A successful HTTP GET already proves the SNI passes this DPI:
+            # no need to run a second probe for the verdict.
+            dpi_verdict="Clean"
+        else
+            dpi_verdict=$(probe_dpi_verdict "${host}")
+        fi
         local dpi_col="${YELLOW}"
         case "${dpi_verdict}" in
             Clean) dpi_col="${GREEN}" ;;

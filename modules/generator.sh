@@ -58,24 +58,29 @@ strategy_generator_worker() {
     local b_d_max=0 b_y_max=0
 
     # A stopped service may already have direct connectivity; measure it too.
+    # Both host lists are probed concurrently (probe_lists2).
+    local b1 b2
+    b1=$(probe_lists2 "${DISCORD_PROBE_HOSTS}" "${YOUTUBE_PROBE_HOSTS}")
+    sleep "${Z2M_PROBE_REPEAT_DELAY:-1}"
+    b2=$(probe_lists2 "${DISCORD_PROBE_HOSTS}" "${YOUTUBE_PROBE_HOSTS}")
+
     local b_cd1 b_cd2 b_cy1 b_cy2
-    b_cd1=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
-    b_cy1=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
-    sleep 1
-    b_cd2=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
-    b_cy2=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
+    b_cd1=$(echo "${b1}" | sed -n 1p)
+    b_cy1=$(echo "${b1}" | sed -n 2p)
+    b_cd2=$(echo "${b2}" | sed -n 1p)
+    b_cy2=$(echo "${b2}" | sed -n 2p)
 
     local b_cd_s1 b_cd_s2 b_cy_s1 b_cy_s2
     local b_cd_m1 b_cd_m2 b_cy_m1 b_cy_m2
-    b_cd_s1=$(echo "${b_cd1}" | awk '{print $3}')
-    b_cd_s2=$(echo "${b_cd2}" | awk '{print $3}')
-    b_cy_s1=$(echo "${b_cy1}" | awk '{print $3}')
-    b_cy_s2=$(echo "${b_cy2}" | awk '{print $3}')
+    b_cd_s1=$(echo "${b_cd1}" | awk '{print $3 + 0}')
+    b_cd_s2=$(echo "${b_cd2}" | awk '{print $3 + 0}')
+    b_cy_s1=$(echo "${b_cy1}" | awk '{print $3 + 0}')
+    b_cy_s2=$(echo "${b_cy2}" | awk '{print $3 + 0}')
 
-    b_cd_m1=$(echo "${b_cd1}" | awk '{print $4}')
-    b_cd_m2=$(echo "${b_cd2}" | awk '{print $4}')
-    b_cy_m1=$(echo "${b_cy1}" | awk '{print $4}')
-    b_cy_m2=$(echo "${b_cy2}" | awk '{print $4}')
+    b_cd_m1=$(echo "${b_cd1}" | awk '{print $4 + 0}')
+    b_cd_m2=$(echo "${b_cd2}" | awk '{print $4 + 0}')
+    b_cy_m1=$(echo "${b_cy1}" | awk '{print $4 + 0}')
+    b_cy_m2=$(echo "${b_cy2}" | awk '{print $4 + 0}')
 
     base_d_score=$(( b_cd_s1 + b_cd_s2 ))
     base_y_score=$(( b_cy_s1 + b_cy_s2 ))
@@ -92,7 +97,11 @@ strategy_generator_worker() {
     echo ""
 
     tui_info "Запуск Pass 1: тестирование ${CANDIDATES_COUNT} десинк-бандлов (по 2 повтора)..."
+    tui_info "Все проверки хостов выполняются параллельно (curl на каждый домен)."
     echo ""
+
+    local t_start
+    t_start=$(date +%s)
 
     printf "%b%-4s %-32s %-12s %-12s %-8s%b\n" "${BOLD}" "№" "Кандидат" "Discord" "YouTube" "GW-Safe" "${NC}"
     printf "%b───────────────────────────────────────────────────────────────────%b\n" "${DGRAY}" "${NC}"
@@ -116,7 +125,7 @@ strategy_generator_worker() {
         local short_name
         short_name=$(printf "%.30s" "${c_name}")
 
-        printf "%-4s %-32s %b⏳ Тест...%b\r" "${i}" "${short_name}" "${YELLOW}" "${NC}"
+        printf "%-4s %-32s %b⏳ Тест... [%s/%s, прошло %ss]%b\r" "${i}" "${short_name}" "${YELLOW}" "${i}" "${CANDIDATES_COUNT}" "$(( $(date +%s) - t_start ))" "${NC}"
 
         # Apply candidate as standalone test rule
         local test_opt
@@ -140,32 +149,26 @@ strategy_generator_worker() {
             continue
         fi
 
-        # Minimum 2 repeats per strategy to eliminate transient flukes
+        # Minimum 2 repeats per strategy to eliminate transient flukes.
+        # Six host checks of one repeat run concurrently (probe_counts2),
+        # so a repeat costs one probe timeout instead of six.
         local d_score_rep1=0 d_score_rep2=0
         local y_score_rep1=0 y_score_rep2=0
-
-        # Repeat 1: Discord (Web, Gateway, CDN)
-        probe_http_reach "discord.com" 2 && d_score_rep1=$(( d_score_rep1 + 1 ))
-        probe_fast_tls "gateway.discord.gg" 443 2 && d_score_rep1=$(( d_score_rep1 + 1 ))
-        probe_fast_tls "cdn.discordapp.com" 443 2 && d_score_rep1=$(( d_score_rep1 + 1 ))
-
-        # Repeat 1: YouTube (Web, Video CDN, Preview CDN)
-        probe_http_reach "www.youtube.com" 2 && y_score_rep1=$(( y_score_rep1 + 1 ))
-        probe_fast_tls "googlevideo.com" 443 2 && y_score_rep1=$(( y_score_rep1 + 1 ))
-        probe_fast_tls "i.ytimg.com" 443 2 && y_score_rep1=$(( y_score_rep1 + 1 ))
-
-        # Short pause between repeats
-        sleep 1
-
-        # Repeat 2: Discord
-        probe_http_reach "discord.com" 2 && d_score_rep2=$(( d_score_rep2 + 1 ))
-        probe_fast_tls "gateway.discord.gg" 443 2 && d_score_rep2=$(( d_score_rep2 + 1 ))
-        probe_fast_tls "cdn.discordapp.com" 443 2 && d_score_rep2=$(( d_score_rep2 + 1 ))
-
-        # Repeat 2: YouTube
-        probe_http_reach "www.youtube.com" 2 && y_score_rep2=$(( y_score_rep2 + 1 ))
-        probe_fast_tls "googlevideo.com" 443 2 && y_score_rep2=$(( y_score_rep2 + 1 ))
-        probe_fast_tls "i.ytimg.com" 443 2 && y_score_rep2=$(( y_score_rep2 + 1 ))
+        local reps res
+        for reps in 1 2; do
+            if [ "${reps}" = "2" ]; then
+                # Short pause between repeats
+                sleep "${Z2M_PROBE_REPEAT_DELAY:-1}"
+            fi
+            res=$(probe_counts2 "${DISCORD_PROBE_HOSTS}" "${YOUTUBE_PROBE_HOSTS}")
+            if [ "${reps}" = "1" ]; then
+                d_score_rep1=$(echo "${res}" | sed -n 1p | awk '{print $1 + 0}')
+                y_score_rep1=$(echo "${res}" | sed -n 2p | awk '{print $1 + 0}')
+            else
+                d_score_rep2=$(echo "${res}" | sed -n 1p | awk '{print $1 + 0}')
+                y_score_rep2=$(echo "${res}" | sed -n 2p | awk '{print $1 + 0}')
+            fi
+        done
 
         # Store sum of two repeats instead of integer average
         local d_score=$(( d_score_rep1 + d_score_rep2 ))
@@ -262,25 +265,28 @@ strategy_generator_worker() {
                 continue
             fi
 
-            # Probe Discord & YouTube with 2 repeats for stability
-            local cd_res1 cd_res2 cy_res1 cy_res2
-            cd_res1=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
-            cy_res1=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
-            sleep 1
-            cd_res2=$(probe_host_list "${DISCORD_PROBE_HOSTS}")
-            cy_res2=$(probe_host_list "${YOUTUBE_PROBE_HOSTS}")
+            # Probe Discord & YouTube with 2 repeats for stability.
+            # Both host lists of a repeat run concurrently (probe_lists2).
+            local cd_res1 cd_res2 cy_res1 cy_res2 p1 p2
+            p1=$(probe_lists2 "${DISCORD_PROBE_HOSTS}" "${YOUTUBE_PROBE_HOSTS}")
+            sleep "${Z2M_PROBE_REPEAT_DELAY:-1}"
+            p2=$(probe_lists2 "${DISCORD_PROBE_HOSTS}" "${YOUTUBE_PROBE_HOSTS}")
+            cd_res1=$(echo "${p1}" | sed -n 1p)
+            cy_res1=$(echo "${p1}" | sed -n 2p)
+            cd_res2=$(echo "${p2}" | sed -n 1p)
+            cy_res2=$(echo "${p2}" | sed -n 2p)
 
             local cd_s1 cd_s2 cy_s1 cy_s2
             local cd_m1 cd_m2 cy_m1 cy_m2
-            cd_s1=$(echo "${cd_res1}" | awk '{print $3}')
-            cd_s2=$(echo "${cd_res2}" | awk '{print $3}')
-            cy_s1=$(echo "${cy_res1}" | awk '{print $3}')
-            cy_s2=$(echo "${cy_res2}" | awk '{print $3}')
+            cd_s1=$(echo "${cd_res1}" | awk '{print $3 + 0}')
+            cd_s2=$(echo "${cd_res2}" | awk '{print $3 + 0}')
+            cy_s1=$(echo "${cy_res1}" | awk '{print $3 + 0}')
+            cy_s2=$(echo "${cy_res2}" | awk '{print $3 + 0}')
 
-            cd_m1=$(echo "${cd_res1}" | awk '{print $4}')
-            cd_m2=$(echo "${cd_res2}" | awk '{print $4}')
-            cy_m1=$(echo "${cy_res1}" | awk '{print $4}')
-            cy_m2=$(echo "${cy_res2}" | awk '{print $4}')
+            cd_m1=$(echo "${cd_res1}" | awk '{print $4 + 0}')
+            cd_m2=$(echo "${cd_res2}" | awk '{print $4 + 0}')
+            cy_m1=$(echo "${cy_res1}" | awk '{print $4 + 0}')
+            cy_m2=$(echo "${cy_res2}" | awk '{print $4 + 0}')
 
             # Sum of two repeats instead of integer average
             local cd_score=$(( cd_s1 + cd_s2 ))

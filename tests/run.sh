@@ -19,6 +19,7 @@ mkdir -p "${BIN_DIR}" "${TMP_ROOT}/runtime"
 
 cat > "${BIN_DIR}/curl" <<'EOF'
 #!/bin/sh
+[ -z "${PROBE_SLEEP:-}" ] || command sleep "${PROBE_SLEEP}"
 header_file=""
 body_file=""
 previous=""

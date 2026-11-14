@@ -595,9 +595,10 @@ zapret_set_opt_raw() {
 
     [ "${rc}" -eq 0 ] || return 1
 
-    # Restart service and wait for nfqws2 to stabilize (2 seconds)
+    # Restart service and let nfqws2 arm its rules before probing.
+    # The settle time is tunable (Z2M_RESTART_SETTLE, default 1s).
     zapret_restart || return 1
-    sleep 2
+    sleep "${Z2M_RESTART_SETTLE:-1}"
     zapret_is_running
 }
 

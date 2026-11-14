@@ -8,7 +8,7 @@
 case "${1:-}" in
     --help|-h|--status|-s|--diagnostics|-d|--check-update|-c|-cu)
         ;;
-    ''|--autoselect|-a|--generate|-g|--youtube|-yt|--discord|-dc|\
+    ''|--autoselect|-a|--generate|-g|--generate-classic|-gc|--youtube|-yt|--discord|-dc|\
     --discord-voice|-dv|--voice|--ports|-p|--restart|-r|\
     --update-zapret|-uz|--update-all|-ua|--update|-u)
         if [ "$(id -u 2>/dev/null)" != "0" ]; then
@@ -60,8 +60,10 @@ for _mod in \
     "${Z2M_DIR}/core/combo_builder.sh" \
     "${Z2M_DIR}/strategies/candidates.sh" \
     "${Z2M_DIR}/strategies/catalog.sh" \
+    "${Z2M_DIR}/strategies/dynamic_space.sh" \
     "${Z2M_DIR}/modules/autoselect.sh" \
     "${Z2M_DIR}/modules/generator.sh" \
+    "${Z2M_DIR}/modules/generator_dynamic.sh" \
     "${Z2M_DIR}/modules/diagnostics.sh" \
     "${Z2M_DIR}/modules/hostlists.sh" \
     "${Z2M_DIR}/modules/dns.sh" \
@@ -226,11 +228,12 @@ strategy_menu() {
         tui_header "🧬 Подбор и тестирование стратегий"
 
         printf "  1. ⚡ Автоподбор из каталога        %b(быстрая проверка 9 проверенных стратегий)%b\n" "${DGRAY}" "${NC}"
-        printf "  2. 🧬 Двухпроходный генератор       %b(полный алгоритм Asterlike: Discord + YouTube)%b\n" "${DGRAY}" "${NC}"
-        printf "  3. ▶️ Тестирование только YouTube   %b(подбор стратегии для видео и googlevideo)%b\n" "${DGRAY}" "${NC}"
-        printf "  4. 💬 Тестирование только Discord   %b(подбор стратегии для Gateway и CDN)%b\n" "${DGRAY}" "${NC}"
-        printf "  5. 🔍 Проверить текущую стратегию   %b(быстрый отчет по доступности хостов)%b\n" "${DGRAY}" "${NC}"
-        printf "  6. 🎧 Исправление голоса Discord    %b(звонки, RTC, custom.d #50)%b\n" "${DGRAY}" "${NC}"
+        printf "  2. 🧬 Генератор стратегий           %b(динамический: строит комбинации параметров)%b\n" "${DGRAY}" "${NC}"
+        printf "  3. 🧬 Генератор Asterlike (класс.)  %b(двухпроходный: 27 готовых бандлов Discord + YouTube)%b\n" "${DGRAY}" "${NC}"
+        printf "  4. ▶️ Тестирование только YouTube   %b(подбор стратегии для видео и googlevideo)%b\n" "${DGRAY}" "${NC}"
+        printf "  5. 💬 Тестирование только Discord   %b(подбор стратегии для Gateway и CDN)%b\n" "${DGRAY}" "${NC}"
+        printf "  6. 🔍 Проверить текущую стратегию   %b(быстрый отчет по доступности хостов)%b\n" "${DGRAY}" "${NC}"
+        printf "  7. 🎧 Исправление голоса Discord    %b(звонки, RTC, custom.d #50)%b\n" "${DGRAY}" "${NC}"
         printf "  0. Назад в главное меню\n\n"
 
         local st_choice
@@ -240,18 +243,21 @@ strategy_menu() {
                 run_strategy_autoselect
                 ;;
             2)
-                run_strategy_generator
+                run_strategy_generator_dynamic
                 ;;
             3)
-                run_test_youtube_only
+                run_strategy_generator
                 ;;
             4)
-                run_test_discord_only
+                run_test_youtube_only
                 ;;
             5)
-                run_test_current_strategy
+                run_test_discord_only
                 ;;
             6)
+                run_test_current_strategy
+                ;;
+            7)
                 run_discord_fix_menu
                 ;;
             0)
@@ -367,7 +373,7 @@ main_menu() {
         printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
 
         printf "  %b1.%b 🛡️ %bНастройка и служба Zapret2%b    %b(статус, запуск, перезапуск, автозапуск)%b\n" "${BOLD}" "${NC}" "${BLUE}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b2.%b 🧬 %bПодбор и генерация стратегий%b  %b(генератор Asterlike, автоподбор, тесты)%b\n" "${BOLD}" "${NC}" "${MAGENTA}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b2.%b 🧬 %bПодбор и генерация стратегий%b  %b(динамический генератор, автоподбор, тесты)%b\n" "${BOLD}" "${NC}" "${MAGENTA}" "${NC}" "${DGRAY}" "${NC}"
         printf "  %b3.%b 🎯 %bКаталог готовых стратегий%b     %b(9 пресетов: General, Flowseal, VK...)%b\n" "${BOLD}" "${NC}" "${WHITE}" "${NC}" "${DGRAY}" "${NC}"
         printf "  %b4.%b 🎧 %bИсправление Discord Voice (звонки/RTC)%b %b(STUN + Media IP Discovery)%b\n" "${BOLD}" "${NC}" "${MAGENTA}" "${NC}" "${DGRAY}" "${NC}"
         printf "  %b5.%b 🌐 %bПорты перехвата TCP / UDP%b     %b(Cloudflare, Discord, игры: 80,443... / 443,50000...)%b\n" "${BOLD}" "${NC}" "${CYAN}" "${NC}" "${DGRAY}" "${NC}"
@@ -441,6 +447,12 @@ case "$1" in
     --generate|-g)
         Z2M_NONINTERACTIVE=1; export Z2M_NONINTERACTIVE
         z2m_bootstrap
+        run_strategy_generator_dynamic
+        exit $?
+        ;;
+    --generate-classic|-gc)
+        Z2M_NONINTERACTIVE=1; export Z2M_NONINTERACTIVE
+        z2m_bootstrap
         run_strategy_generator
         exit $?
         ;;
@@ -508,7 +520,8 @@ case "$1" in
         printf "Использование:\n"
         printf "  z2m | zsm                         Интерактивное меню\n"
         printf "  z2m -a  | --autoselect           Автоподбор лучшей стратегии из каталога\n"
-        printf "  z2m -g  | --generate             Запуск двухпроходного генератора связок\n"
+        printf "  z2m -g  | --generate             Динамический генератор стратегий (перебор параметров)\n"
+        printf "  z2m -gc | --generate-classic     Двухпроходный генератор Asterlike (27 бандлов)\n"
         printf "  z2m -yt | --youtube              Тестирование стратегий только для YouTube\n"
         printf "  z2m -dc | --discord              Тестирование стратегий только для Discord\n"
         printf "  z2m -dv | --discord-voice|--voice Установка исправления Discord Voice (звонки / RTC)\n"

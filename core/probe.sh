@@ -134,7 +134,7 @@ probe_curl_request() {
 probe_fast_tls() {
     local host="$1"
     local port="${2:-443}"
-    local timeout="${3:-2}"
+    local timeout="${3:-${Z2M_PROBE_TIMEOUT:-2}}"
 
     if command -v curl >/dev/null 2>&1; then
         probe_curl_request "${host}" "${port}" "${timeout}" ""
@@ -149,7 +149,7 @@ probe_fast_tls() {
 probe_tls12() {
     local host="$1"
     local port="${2:-443}"
-    local timeout="${3:-2}"
+    local timeout="${3:-${Z2M_PROBE_TIMEOUT:-2}}"
 
     if command -v curl >/dev/null 2>&1; then
         probe_curl_request "${host}" "${port}" "${timeout}" --tlsv1.2 --tls-max 1.2
@@ -165,7 +165,7 @@ probe_tls12() {
 probe_tls13() {
     local host="$1"
     local port="${2:-443}"
-    local timeout="${3:-2}"
+    local timeout="${3:-${Z2M_PROBE_TIMEOUT:-2}}"
 
     if command -v curl >/dev/null 2>&1; then
         probe_curl_request "${host}" "${port}" "${timeout}" "--tlsv1.3"
@@ -200,26 +200,122 @@ probe_host() {
     fi
 }
 
+# ==============================================================================
+# Concurrent probing engine
+# Every host check is one curl process; they are spawned in parallel background
+# jobs and aggregated afterwards, so a full host list costs one probe timeout
+# instead of one timeout per host. Z2M_PROBE_PARALLEL=0 restores the strictly
+# sequential behaviour for very weak routers.
+# ==============================================================================
+
+# Probe every host in $1 (timeout $2) and print "<host> <1|0>" lines.
+# Optional $3 selects the probe type: "http" (default) or "tls12".
+probe_hosts_map() {
+    local hosts="$1"
+    local timeout="${2:-${Z2M_PROBE_TIMEOUT:-2}}"
+    local mode="${3:-http}"
+    local h i=0 passed ok dir="" pids="" p
+
+    if [ "${Z2M_PROBE_PARALLEL:-1}" = "1" ]; then
+        z2m_prepare_runtime 2>/dev/null
+        dir=$(mktemp -d "${Z2M_TMP}/probe.XXXXXX" 2>/dev/null) || dir=""
+    fi
+
+    if [ -n "${dir}" ]; then
+        for h in ${hosts}; do
+            i=$(( i + 1 ))
+            (
+                ok=0
+                if [ "${mode}" = "tls12" ]; then
+                    probe_tls12 "${h}" 443 "${timeout}" && ok=1
+                else
+                    probe_http_reach "${h}" "${timeout}" && ok=1
+                fi
+                printf '%s' "${ok}" > "${dir}/${i}"
+            ) &
+            pids="${pids} $!"
+        done
+        for p in ${pids}; do
+            wait "${p}" 2>/dev/null
+        done
+        i=0
+        for h in ${hosts}; do
+            i=$(( i + 1 ))
+            passed=0
+            [ "$(cat "${dir}/${i}" 2>/dev/null)" = "1" ] && passed=1
+            echo "${h} ${passed}"
+        done
+        rm -rf "${dir}"
+    else
+        for h in ${hosts}; do
+            passed=0
+            if [ "${mode}" = "tls12" ]; then
+                probe_tls12 "${h}" 443 "${timeout}" && passed=1
+            else
+                probe_http_reach "${h}" "${timeout}" && passed=1
+            fi
+            echo "${h} ${passed}"
+        done
+    fi
+    return 0
+}
+
+# Aggregate host map into "<passed> <total>" (1 point per reachable host).
+probe_hosts_count() {
+    probe_hosts_map "$@" | awk '{ if ($2 == 1) ok++; total++ } END { print ok + 0, total + 0 }'
+}
+
 # Probe list of hosts with instant response
 # Returns: "<passed_checks> <total_checks> <weighted_score> <max_weighted_score>"
 probe_host_list() {
-    local hosts="$1"
-    local total_checks=0
-    local passed_checks=0
-    local total_weighted=0
-    local max_weighted=0
+    local res
+    res=$(probe_hosts_count "$@")
+    echo "${res} $(( ${res%% *} * 5 )) $(( ${res##* } * 5 ))"
+}
 
-    for h in ${hosts}; do
-        total_checks=$(( total_checks + 1 ))
-        max_weighted=$(( max_weighted + 5 ))
+# Probe two host lists concurrently; prints two "weighted" result lines
+# (first line for list $1, second line for list $2).
+probe_lists2() {
+    local a="$1" b="$2" timeout="${3:-${Z2M_PROBE_TIMEOUT:-2}}"
+    local dir pa pb
+    z2m_prepare_runtime 2>/dev/null
+    dir=$(mktemp -d "${Z2M_TMP}/probe2.XXXXXX" 2>/dev/null)
+    if [ -z "${dir}" ]; then
+        probe_host_list "${a}" "${timeout}"
+        probe_host_list "${b}" "${timeout}"
+        return 0
+    fi
+    probe_host_list "${a}" "${timeout}" > "${dir}/a" &
+    pa=$!
+    probe_host_list "${b}" "${timeout}" > "${dir}/b" &
+    pb=$!
+    wait "${pa}" 2>/dev/null
+    wait "${pb}" 2>/dev/null
+    cat "${dir}/a" "${dir}/b"
+    rm -rf "${dir}"
+    return 0
+}
 
-        if probe_http_reach "${h}" 2; then
-            passed_checks=$(( passed_checks + 1 ))
-            total_weighted=$(( total_weighted + 5 ))
-        fi
-    done
-
-    echo "${passed_checks} ${total_checks} ${total_weighted} ${max_weighted}"
+# Same as probe_lists2 but prints two "<passed> <total>" lines.
+probe_counts2() {
+    local a="$1" b="$2" timeout="${3:-${Z2M_PROBE_TIMEOUT:-2}}"
+    local dir pa pb
+    z2m_prepare_runtime 2>/dev/null
+    dir=$(mktemp -d "${Z2M_TMP}/probe2.XXXXXX" 2>/dev/null)
+    if [ -z "${dir}" ]; then
+        probe_hosts_count "${a}" "${timeout}"
+        probe_hosts_count "${b}" "${timeout}"
+        return 0
+    fi
+    probe_hosts_count "${a}" "${timeout}" > "${dir}/a" &
+    pa=$!
+    probe_hosts_count "${b}" "${timeout}" > "${dir}/b" &
+    pb=$!
+    wait "${pa}" 2>/dev/null
+    wait "${pb}" 2>/dev/null
+    cat "${dir}/a" "${dir}/b"
+    rm -rf "${dir}"
+    return 0
 }
 
 # DPI Signature Probe: determines if DPI is actively blocking host by SNI
