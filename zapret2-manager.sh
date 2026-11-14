@@ -108,6 +108,13 @@ z2m_bootstrap() {
         done
         [ "${missing_list}" -eq 1 ] && zapret_sync_hostlists
     fi
+
+    # Clean up stale locks from previously dead processes
+    if [ -d "${Z2M_TMP}/operation.lock" ]; then
+        if ! z2m_lock_holder_alive "${Z2M_TMP}/operation.lock"; then
+            rm -r "${Z2M_TMP}/operation.lock" 2>/dev/null
+        fi
+    fi
 }
 
 # 1. Меню управления службой Zapret2
@@ -249,19 +256,19 @@ strategy_menu() {
         st_choice=$(tui_prompt "Выберите действие" "1")
         case "${st_choice}" in
             1)
-                run_strategy_autoselect
+                run_strategy_autoselect || tui_pause
                 ;;
             2)
-                run_strategy_generator
+                run_strategy_generator || tui_pause
                 ;;
             3)
-                run_test_youtube_only
+                run_test_youtube_only || tui_pause
                 ;;
             4)
-                run_test_discord_only
+                run_test_discord_only || tui_pause
                 ;;
             5)
-                run_test_current_strategy
+                run_test_current_strategy || tui_pause
                 ;;
             6)
                 run_discord_fix_menu

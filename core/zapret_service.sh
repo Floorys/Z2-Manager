@@ -407,13 +407,21 @@ z2m_proc_starttime() {
 # reused by another process. A lock without a recorded PID is a leftover from
 # a crashed run or an older manager version and is always treated as stale.
 z2m_lock_holder_alive() {
-    local lock_dir="$1" pid start cur
+    local lock_dir="$1" pid start cur comm
     pid=$(cat "${lock_dir}/pid" 2>/dev/null)
     case "${pid}" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "${pid}" 2>/dev/null || return 1
     cur=$(z2m_proc_starttime "${pid}")
     start=$(cat "${lock_dir}/start" 2>/dev/null)
     [ -n "${start}" ] && [ -n "${cur}" ] && [ "${start}" != "${cur}" ] && return 1
-    kill -0 "${pid}" 2>/dev/null
+    if [ -r "/proc/${pid}/cmdline" ]; then
+        comm=$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null)
+        case "${comm}" in
+            *zapret*|*z2m*|*zsm*|*sh*|*ash*|*bash*) ;;
+            *) return 1 ;;
+        esac
+    fi
+    return 0
 }
 
 z2m_run_guarded() {
@@ -442,6 +450,7 @@ z2m_run_guarded() {
         rm -r "${runtime}/operation.lock" 2>/dev/null; return 1;
     }
     local Z2M_TMP="${work}"
+    export Z2M_TMP
     backup=$(zapret_backup_config) || {
         rm -r "${work}" "${runtime}/operation.lock" 2>/dev/null; return 1;
     }
@@ -449,7 +458,7 @@ z2m_run_guarded() {
     trap 'signal_rc=143; [ -z "${worker:-}" ] || kill -TERM "${worker}" 2>/dev/null' TERM
     trap 'signal_rc=129; [ -z "${worker:-}" ] || kill -HUP "${worker}" 2>/dev/null' HUP
     (
-        Z2M_GUARDED=1
+        export Z2M_GUARDED=1
         Z2M_TRANSACTION_COMMITTED=0
         trap 'exit 143' TERM
         trap 'exit 129' HUP
@@ -742,8 +751,9 @@ zapret_sync_fake_blobs() {
             [ -f "${f}" ] || continue
             cp -f "${f}" "${dst_dir}/" 2>/dev/null || return 1
         done
-        chmod 644 "${dst_dir}"/*.bin 2>/dev/null
+        chmod 644 "${dst_dir}"/*.bin 2>/dev/null || true
     fi
+    return 0
 }
 
 # Synchronize bundled hostlists into /opt/zapret2/ipset
@@ -760,8 +770,9 @@ zapret_sync_hostlists() {
             [ "${force}" = "1" ] || [ ! -f "${dst_dir}/${f##*/}" ] || continue
             cp -f "${f}" "${dst_dir}/" 2>/dev/null || return 1
         done
-        chmod 644 "${dst_dir}"/*.txt 2>/dev/null
+        chmod 644 "${dst_dir}"/*.txt 2>/dev/null || true
     fi
+    return 0
 }
 
 # Synchronize bundled custom scripts into /opt/zapret2/init.d/openwrt/custom.d
@@ -774,6 +785,7 @@ zapret_sync_custom_scripts() {
     # Installation/bootstrap must never replace an existing user script.
     if [ -f "${src_file}" ] && [ ! -e "${dst_dir}/50-script.sh" ] && [ ! -L "${dst_dir}/50-script.sh" ]; then
         cp -f "${src_file}" "${dst_dir}/50-script.sh" 2>/dev/null
-        chmod 755 "${dst_dir}/50-script.sh" 2>/dev/null
+        chmod 755 "${dst_dir}/50-script.sh" 2>/dev/null || true
     fi
+    return 0
 }

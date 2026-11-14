@@ -42,10 +42,15 @@ strategy_generator_worker() {
         tui_pause
         return 1
     fi
+    if ! probe_check_deps; then
+        tui_error "Не найдены curl или wget — проверка доступа в интернет невозможна!"
+        tui_pause
+        return 1
+    fi
 
     # Synchronize required blobs and lists
-    zapret_sync_fake_blobs || return 1
-    zapret_sync_hostlists 0 || return 1
+    zapret_sync_fake_blobs || { tui_error "Не удалось синхронизировать файлы фейков!"; tui_pause; return 1; }
+    zapret_sync_hostlists 0 || { tui_error "Не удалось синхронизировать списки хостов!"; tui_pause; return 1; }
 
     # The shared guard owns the snapshot and terminates the worker on signals.
 

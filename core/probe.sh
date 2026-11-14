@@ -93,6 +93,14 @@ probe_curl_request() {
         "$@" --range 0-8191 -D "${hdr_file}" -o "${body_file}" \
         -w "%{http_code}" "https://${host}:${port}/" 2>/dev/null)
     local curl_exit=$?
+    if [ "${curl_exit}" -eq 2 ]; then
+        # Minimal OpenWrt curl without --proto support: retry without proto restrictions
+        http_code=$(curl -sS -L \
+            --connect-timeout "${timeout}" -m "${max_t}" -A "${BROWSER_UA}" \
+            "$@" --range 0-8191 -D "${hdr_file}" -o "${body_file}" \
+            -w "%{http_code}" "https://${host}:${port}/" 2>/dev/null)
+        curl_exit=$?
+    fi
     PROBE_CURL_EXIT="${curl_exit}"
 
     # Separate curl exit code from HTTP code

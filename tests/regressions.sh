@@ -506,6 +506,17 @@ service_enable_toggle() (
 )
 check "zapret_set_enabled updates UCI, config and is reflected in zapret_is_enabled" service_enable_toggle
 
+test_current_strategy_renders_ok() (
+    fixture
+    DIAGNOSTIC_HOSTS="test.host"
+    probe_check_deps() { return 0; }
+    probe_hosts_map() { echo "test.host 1"; }
+    local out
+    out=$(Z2M_NONINTERACTIVE=1 run_test_current_strategy 2>&1)
+    echo "${out}" | grep -q "test.host.*OK.*OK"
+)
+check "run_test_current_strategy correctly displays OK status for accessible hosts" test_current_strategy_renders_ok
+
 shell_syntax() {
     find "${ROOT}" -name '*.sh' -exec sh -n {} \; > "${TMP_ROOT}/syntax-log" 2>&1
     [ ! -s "${TMP_ROOT}/syntax-log" ]
