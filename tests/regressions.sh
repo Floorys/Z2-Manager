@@ -379,10 +379,27 @@ check "guard preserves interactive stdin and restores caller signal traps" guard
 guard_rejects_concurrent_operation() (
     fixture
     mkdir "${Z2M_TMP}/operation.lock"
-    printf '%s\n' "$$" > "${Z2M_TMP}/operation.lock/pid"
-    ! zapret_set_opt candidate >/dev/null 2>&1 && cmp -s "${ZAPRET2_CONFIG}" "${CASE_DIR}/original"
+    sh -c 'while :; do sleep 1; done' &
+    local other_pid=$!
+    printf '%s\n' "${other_pid}" > "${Z2M_TMP}/operation.lock/pid"
+    z2m_proc_starttime "${other_pid}" > "${Z2M_TMP}/operation.lock/start" 2>/dev/null
+    local ret=0
+    zapret_set_opt candidate >/dev/null 2>&1 || ret=1
+    kill "${other_pid}" 2>/dev/null
+    wait "${other_pid}" 2>/dev/null
+    [ "${ret}" -eq 1 ] && cmp -s "${ZAPRET2_CONFIG}" "${CASE_DIR}/original"
 )
 check "an existing operation lock prevents concurrent changes" guard_rejects_concurrent_operation
+
+guard_removes_self_stale_lock() (
+    fixture
+    mkdir "${Z2M_TMP}/operation.lock"
+    printf '%s\n' "$$" > "${Z2M_TMP}/operation.lock/pid"
+    zapret_set_opt candidate >/dev/null 2>&1 &&
+        [ "$(zapret_get_opt)" = candidate ] &&
+        [ ! -e "${Z2M_TMP}/operation.lock" ]
+)
+check "a leftover lock with current shell PID is removed and operation proceeds" guard_removes_self_stale_lock
 
 guard_removes_stale_lock() (
     fixture

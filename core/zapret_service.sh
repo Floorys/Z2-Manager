@@ -430,15 +430,36 @@ z2m_run_guarded() {
     local runtime="${Z2M_TMP}" saved_traps worker rc signal_rc=0 backup work
     saved_traps=$(trap)
     mkdir "${runtime}/operation.lock" 2>/dev/null || {
-        if z2m_lock_holder_alive "${runtime}/operation.lock"; then
-            printf 'Другая операция уже выполняется: %s/operation.lock (PID %s)\n' \
-                "${runtime}" "$(cat "${runtime}/operation.lock/pid" 2>/dev/null)" >&2
-            return 1
+        local lock_pid
+        lock_pid=$(cat "${runtime}/operation.lock/pid" 2>/dev/null)
+        if [ "${lock_pid}" = "$$" ]; then
+            # The lock was left by a previous interrupted command in THIS very shell session.
+            # A single-threaded shell cannot be running another operation concurrently.
+            rm -r "${runtime}/operation.lock" 2>/dev/null
+        elif z2m_lock_holder_alive "${runtime}/operation.lock"; then
+            if [ -t 0 ] && [ "${Z2M_NONINTERACTIVE:-0}" != "1" ]; then
+                printf 'Обнаружена активная блокировка: %s/operation.lock (PID %s)\n' "${runtime}" "${lock_pid}" >&2
+                local ans
+                ans=$(tui_prompt "Снять блокировку принудительно и продолжить? [y/N]" "N")
+                case "${ans}" in
+                    y|Y|yes|YES)
+                        rm -r "${runtime}/operation.lock" 2>/dev/null
+                        ;;
+                    *)
+                        return 1
+                        ;;
+                esac
+            else
+                printf 'Другая операция уже выполняется: %s/operation.lock (PID %s)\n' \
+                    "${runtime}" "${lock_pid}" >&2
+                return 1
+            fi
+        else
+            # Holder died (SIGKILL, closed terminal, power loss): the lock is stale.
+            printf 'Обнаружена блокировка от завершённого процесса — удаляю: %s/operation.lock\n' \
+                "${runtime}" >&2
+            rm -r "${runtime}/operation.lock" 2>/dev/null
         fi
-        # Holder died (SIGKILL, closed terminal, power loss): the lock is stale.
-        printf 'Обнаружена блокировка от завершённого процесса — удаляю: %s/operation.lock\n' \
-            "${runtime}" >&2
-        rm -r "${runtime}/operation.lock" 2>/dev/null
         mkdir "${runtime}/operation.lock" 2>/dev/null || {
             printf 'Другая операция уже выполняется: %s/operation.lock\n' "${runtime}" >&2
             return 1
@@ -475,15 +496,15 @@ z2m_run_guarded() {
         rc=$?
         kill -0 "${worker}" 2>/dev/null || break
     done
+    rm -r "${runtime}/operation.lock" 2>/dev/null
     trap - INT TERM HUP
     eval "${saved_traps}"
     if [ -f "${work}/recovery-failed" ]; then
         rc=1
     else
-        rm -r "${work}"
+        rm -r "${work}" 2>/dev/null
         [ "${signal_rc}" -eq 0 ] || rc="${signal_rc}"
     fi
-    rm -r "${runtime}/operation.lock" 2>/dev/null
     return "${rc}"
 } 9<&0
 

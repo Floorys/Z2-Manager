@@ -109,9 +109,11 @@ z2m_bootstrap() {
         [ "${missing_list}" -eq 1 ] && zapret_sync_hostlists
     fi
 
-    # Clean up stale locks from previously dead processes
+    # Clean up stale locks from previously dead processes or earlier runs in this shell
     if [ -d "${Z2M_TMP}/operation.lock" ]; then
-        if ! z2m_lock_holder_alive "${Z2M_TMP}/operation.lock"; then
+        local lock_pid
+        lock_pid=$(cat "${Z2M_TMP}/operation.lock/pid" 2>/dev/null)
+        if [ "${lock_pid}" = "$$" ] || ! z2m_lock_holder_alive "${Z2M_TMP}/operation.lock"; then
             rm -r "${Z2M_TMP}/operation.lock" 2>/dev/null
         fi
     fi
