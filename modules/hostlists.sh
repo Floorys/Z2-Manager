@@ -115,6 +115,8 @@ _add_custom_domain() {
     fi
     printf '%s\n' "${domain}" >> "${file}"
     tui_success "Домен «${domain}» добавлен в ${file}!"
-    zapret_restart
+    if zapret_is_running; then
+        zapret_restart
+    fi
     tui_pause
 }

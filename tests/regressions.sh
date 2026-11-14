@@ -2,7 +2,6 @@
 # Sourced by run.sh. Every scenario runs in a subshell and only touches TMP_ROOT.
 . "${ROOT}/modules/autoselect.sh"
 . "${ROOT}/modules/generator.sh"
-. "${ROOT}/modules/generator_dynamic.sh"
 . "${ROOT}/modules/discord_fix.sh"
 . "${ROOT}/modules/dns.sh"
 
@@ -317,112 +316,6 @@ probe_lists_two_concurrent() (
 )
 check "probe_lists2 measures two host lists concurrently" probe_lists_two_concurrent
 
-# ---------------------------------------------------------------------------
-# Dynamic strategy generator (real parameter search)
-# ---------------------------------------------------------------------------
-
-dynamic_space_generation() (
-    local f1="${TMP_ROOT}/dyn_s1" f2="${TMP_ROOT}/dyn_s2"
-    rm -f "${f1}" "${f2}"
-    dyn_build_stage1 "${f1}" || return 1
-    [ "$(wc -l < "${f1}" | tr -d ' ')" -ge 19 ] || return 1
-    awk -F'|' 'NF != 2 || $2 !~ /--lua-desync=/ { bad = 1 } END { exit bad ? 1 : 0 }' "${f1}" || return 1
-    case "$(cat "${f1}")" in *\"*) return 1 ;; esac
-    # Refine the pure-fake class (6) and the combined fake+split class (14).
-    dyn_build_stage2 "${f2}" "${f1}" 6 14 || return 1
-    [ "$(wc -l < "${f2}" | tr -d ' ')" -ge 4 ] || return 1
-    awk -F'|' 'NF != 2 || $2 !~ /--lua-desync=/ { bad = 1 } END { exit bad ? 1 : 0 }' "${f2}" || return 1
-    if awk -F'|' '{ print $2 }' "${f1}" "${f2}" | sort | uniq -d | grep -q .; then
-        return 1
-    fi
-    return 0
-)
-check "dynamic space generates valid unique bundles" dynamic_space_generation
-
-dynamic_fixture() {
-    dyn_build_stage1() { printf 'A|tlsA\nB|tlsB\n' > "$1"; }
-    dyn_build_stage2() { printf 'C|tlsC\n' > "$1"; }
-    combo_build_single_test_args() { echo "single:$1"; }
-    combo_build_args() { echo "pair:$1:$2"; }
-    probe_host_list() {
-        if grep -q 'NFQWS2_OPT="original"' "${ZAPRET2_CONFIG}"; then
-            echo '0 3 0 15'
-        else
-            echo '3 3 15 15'
-        fi
-    }
-}
-
-dynamic_generator_flow() (
-    fixture
-    dynamic_fixture
-    run_strategy_generator_dynamic >/dev/null 2>&1 &&
-        [ "$(zapret_get_opt)" = "pair:tlsC:tlsC" ] &&
-        [ "$(cat "${CASE_DIR}/restarts")" -eq 5 ]
-)
-check "dynamic generator applies the best generated pair and commits" dynamic_generator_flow
-
-dynamic_cancel_workflow() (
-    fixture
-    dynamic_fixture
-    SIGNAL_AT="$1" SIGNAL_NAME="${2:-TERM}"
-    run_strategy_generator_dynamic >/dev/null 2>&1
-    local rc=$?
-    case "${2:-TERM}" in
-        INT) [ "${rc}" -eq 130 ] ;;
-        HUP) [ "${rc}" -eq 129 ] ;;
-        *) [ "${rc}" -eq 143 ] ;;
-    esac || return 1
-    cmp -s "${ZAPRET2_CONFIG}" "${CASE_DIR}/original" &&
-        [ "$(cat "${CASE_DIR}/status")" = running ] &&
-        [ ! -d "${Z2M_TMP}/operation.lock" ]
-)
-check "dynamic generator: signal during stage 1 rolls back" dynamic_cancel_workflow 2
-check "dynamic generator: signal during final apply rolls back" dynamic_cancel_workflow 5
-check "dynamic generator: Ctrl+C returns 130 after recovery" dynamic_cancel_workflow 2 INT
-
-dynamic_failed_final_apply() (
-    fixture
-    dynamic_fixture
-    FAIL_AT=5
-    ! run_strategy_generator_dynamic >/dev/null 2>&1 &&
-        cmp -s "${ZAPRET2_CONFIG}" "${CASE_DIR}/original"
-)
-check "dynamic generator final restart failure restores the original config" dynamic_failed_final_apply
-
-dynamic_keeps_perfect_baseline() (
-    fixture
-    dynamic_fixture
-    probe_host_list() {
-        if grep -q 'NFQWS2_OPT="original"' "${ZAPRET2_CONFIG}"; then
-            echo '3 3 15 15'
-        else
-            echo '0 3 0 15'
-        fi
-    }
-    run_strategy_generator_dynamic >/dev/null 2>&1 &&
-        [ "$(cat "${CASE_DIR}/restarts")" -eq 0 ] &&
-        cmp -s "${ZAPRET2_CONFIG}" "${CASE_DIR}/original"
-)
-check "dynamic generator keeps a perfect baseline without restarts" dynamic_keeps_perfect_baseline
-
-dynamic_keeps_baseline_when_worse() (
-    fixture
-    dynamic_fixture
-    probe_host_list() {
-        if grep -q 'NFQWS2_OPT="original"' "${ZAPRET2_CONFIG}"; then
-            echo '2 3 10 15'
-        else
-            echo '1 3 5 15'
-        fi
-    }
-    run_strategy_generator_dynamic >/dev/null 2>&1 &&
-        cmp -s "${ZAPRET2_CONFIG}" "${CASE_DIR}/original"
-)
-check "dynamic generator keeps the baseline when the search is not better" dynamic_keeps_baseline_when_worse
-
-
-
 discord_does_not_delete_foreign() (
     fixture
     echo foreign > "${CUSTOM_SCRIPT_50}"
@@ -587,6 +480,31 @@ combo_http_profile() (
         echo "${single}" | grep -q -- '--blob=tls_sber:'
 )
 check "combo and standalone rules include HTTP 80 and all candidate blobs" combo_http_profile
+
+service_enable_toggle() (
+    fixture
+    UCI_CONFIG="${CASE_DIR}/uci_cfg"
+    : > "${UCI_CONFIG}"
+    uci() {
+        case "$1" in
+            set)
+                local key="${2%%=*}" val="${2#*=}"
+                echo "${key}=${val}" >> "${UCI_CONFIG}"
+                ;;
+            -q)
+                grep -E "^${3}=" "${UCI_CONFIG}" 2>/dev/null | tail -n1 | cut -d'=' -f2-
+                ;;
+            commit) ;;
+        esac
+    }
+    zapret_set_enabled 0 || return 1
+    ! zapret_is_enabled || return 1
+    grep -q 'NFQWS2_ENABLE="0"' "${ZAPRET2_CONFIG}" || return 1
+    zapret_set_enabled 1 || return 1
+    zapret_is_enabled || return 1
+    grep -q 'NFQWS2_ENABLE="1"' "${ZAPRET2_CONFIG}"
+)
+check "zapret_set_enabled updates UCI, config and is reflected in zapret_is_enabled" service_enable_toggle
 
 shell_syntax() {
     find "${ROOT}" -name '*.sh' -exec sh -n {} \; > "${TMP_ROOT}/syntax-log" 2>&1

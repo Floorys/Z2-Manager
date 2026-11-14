@@ -72,6 +72,8 @@ zapret_get_installed_version() {
 }
 
 zapret_start() {
+    zapret_set_enabled 1
+
     if [ -f "${ZAPRET2_SYNC}" ]; then
         chmod +x "${ZAPRET2_SYNC}" 2>/dev/null
         "${ZAPRET2_SYNC}" >/dev/null 2>&1 || return 1
@@ -101,6 +103,8 @@ zapret_start() {
 }
 
 zapret_stop() {
+    zapret_set_enabled 0
+
     local init_script=""
     if [ -x "${ZAPRET2_INIT}" ]; then
         init_script="${ZAPRET2_INIT}"
@@ -121,6 +125,19 @@ zapret_stop() {
         sleep 1
         i=$(( i + 1 ))
     done
+
+    # If init script failed to stop background daemons, kill them cleanly
+    if zapret_is_running; then
+        killall nfqws2 nfqws 2>/dev/null
+        sleep 1
+        if zapret_is_running; then
+            killall -9 nfqws2 nfqws 2>/dev/null
+        fi
+    fi
+
+    if ! zapret_is_running; then
+        return 0
+    fi
     return 1
 }
 
@@ -224,6 +241,81 @@ zapret_write_opt_to_config() {
     local write_rc=$?
     rm -f "${tmp_cfg}" 2>/dev/null
     return "${write_rc}"
+}
+
+# Write NFQWS2_ENABLE safely to /opt/zapret2/config
+zapret_write_enable_to_config() {
+    local enable_val="$1"
+    [ -f "${ZAPRET2_CONFIG}" ] || return 0
+    z2m_prepare_runtime || return 1
+    local tmp_cfg
+    tmp_cfg=$(mktemp "${Z2M_TMP}/cfg_en.XXXXXX") || return 1
+
+    Z2M_NEW_ENABLE="${enable_val}" awk '
+        BEGIN { found = 0 }
+        /^[[:space:]]*(export[[:space:]]+)?NFQWS2_ENABLE=/ {
+            found = 1
+            prefix = ""
+            if ($0 ~ /^[[:space:]]*export/) prefix = "export "
+            print prefix "NFQWS2_ENABLE=\"" ENVIRON["Z2M_NEW_ENABLE"] "\""
+            next
+        }
+        { print }
+        END {
+            if (!found) {
+                print "NFQWS2_ENABLE=\"" ENVIRON["Z2M_NEW_ENABLE"] "\""
+            }
+        }
+    ' "${ZAPRET2_CONFIG}" > "${tmp_cfg}" && cat "${tmp_cfg}" > "${ZAPRET2_CONFIG}"
+    local write_rc=$?
+    rm -f "${tmp_cfg}" 2>/dev/null
+    return "${write_rc}"
+}
+
+# Synchronize enable/disable state across OpenWrt UCI and /opt/zapret2/config
+zapret_set_enabled() {
+    local enable="${1:-1}"
+    local rc=0
+
+    if command -v uci >/dev/null 2>&1 && [ -f "${UCI_CONFIG}" ]; then
+        uci set "${UCI_SECTION}.NFQWS2_ENABLE=${enable}" || rc=1
+        uci set "${UCI_SECTION}.enabled=${enable}" 2>/dev/null || true
+        uci commit zapret2 2>/dev/null || rc=1
+    fi
+
+    if [ -f "${ZAPRET2_CONFIG}" ]; then
+        zapret_write_enable_to_config "${enable}" || rc=1
+    fi
+
+    [ "${rc}" -eq 0 ] || return 1
+    return 0
+}
+
+# Check if zapret service is currently enabled in UCI, config, or init.d
+zapret_is_enabled() {
+    local uci_val=""
+    if command -v uci >/dev/null 2>&1 && [ -f "${UCI_CONFIG}" ]; then
+        uci_val="$(uci -q get "${UCI_SECTION}.NFQWS2_ENABLE")"
+        [ -z "${uci_val}" ] && uci_val="$(uci -q get "${UCI_SECTION}.enabled")"
+    fi
+    if [ -n "${uci_val}" ]; then
+        [ "${uci_val}" = "1" ] && return 0
+        return 1
+    fi
+    if [ -f "${ZAPRET2_CONFIG}" ]; then
+        local cfg_val
+        cfg_val="$(grep "^NFQWS2_ENABLE=" "${ZAPRET2_CONFIG}" 2>/dev/null | cut -d'=' -f2- | tr -d '"\r\n ')"
+        if [ -n "${cfg_val}" ]; then
+            [ "${cfg_val}" = "1" ] && return 0
+            return 1
+        fi
+    fi
+    if [ -x "${ZAPRET2_INIT}" ]; then
+        "${ZAPRET2_INIT}" enabled 2>/dev/null && return 0
+    elif [ -x "/etc/init.d/zapret" ]; then
+        /etc/init.d/zapret enabled 2>/dev/null && return 0
+    fi
+    return 1
 }
 
 # Snapshot both representations and the original service state. Never guess the
@@ -619,8 +711,9 @@ zapret_set_opt_raw() {
     # Automatically ensure full ports are active so Discord and Web traffic are intercepted
     zapret_ensure_full_ports || return 1
 
+    zapret_set_enabled 1 || rc=1
+
     if command -v uci >/dev/null 2>&1 && [ -f "${UCI_CONFIG}" ]; then
-        uci set "${UCI_SECTION}.NFQWS2_ENABLE=1" || rc=1
         uci set "${UCI_SECTION}.NFQWS2_OPT=${new_opt}" || rc=1
         uci commit zapret2 2>/dev/null || rc=1
     fi

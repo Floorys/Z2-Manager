@@ -1,5 +1,10 @@
 #!/bin/sh
 
+if [ "${Z2M_TEST_INIT:-0}" != "1" ] && command -v python3 >/dev/null 2>&1; then
+    Z2M_TEST_INIT=1 export Z2M_TEST_INIT
+    exec python3 -c 'import signal, os, sys; signal.signal(signal.SIGHUP, signal.SIG_DFL); os.execv("/bin/sh", ["/bin/sh"] + sys.argv[1:])' "$0" "$@"
+fi
+
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

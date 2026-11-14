@@ -4,7 +4,7 @@
 # Zapret2-Manager: Global Configuration & Environment Constants
 # ==============================================================================
 
-Z2M_VERSION="1.4.0"
+Z2M_VERSION="1.4.1"
 Z2M_APP_NAME="Zapret2-Manager"
 Z2M_GITHUB_REPO="Floorys/Z2-Manager"
 
