@@ -486,9 +486,30 @@ check "guard preserves interactive stdin and restores caller signal traps" guard
 guard_rejects_concurrent_operation() (
     fixture
     mkdir "${Z2M_TMP}/operation.lock"
+    printf '%s\n' "$$" > "${Z2M_TMP}/operation.lock/pid"
     ! zapret_set_opt candidate >/dev/null 2>&1 && cmp -s "${ZAPRET2_CONFIG}" "${CASE_DIR}/original"
 )
 check "an existing operation lock prevents concurrent changes" guard_rejects_concurrent_operation
+
+guard_removes_stale_lock() (
+    fixture
+    mkdir "${Z2M_TMP}/operation.lock"
+    printf '999999\n' > "${Z2M_TMP}/operation.lock/pid"
+    printf '1\n' > "${Z2M_TMP}/operation.lock/start"
+    zapret_set_opt candidate >/dev/null 2>&1 &&
+        [ "$(zapret_get_opt)" = candidate ] &&
+        [ ! -e "${Z2M_TMP}/operation.lock" ]
+)
+check "a lock left by a dead process is removed and the operation proceeds" guard_removes_stale_lock
+
+guard_removes_legacy_empty_lock() (
+    fixture
+    mkdir "${Z2M_TMP}/operation.lock"
+    zapret_set_opt candidate >/dev/null 2>&1 &&
+        [ "$(zapret_get_opt)" = candidate ] &&
+        [ ! -e "${Z2M_TMP}/operation.lock" ]
+)
+check "a legacy lock without a PID is removed and the operation proceeds" guard_removes_legacy_empty_lock
 
 # Keep the actual service functions for checks against failing executable hooks.
 REAL_ZAPRET_START=$(sed -n '/^zapret_start() {/,/^}/p' "${ROOT}/core/zapret_service.sh")

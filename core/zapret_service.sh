@@ -302,21 +302,56 @@ zapret_restore_config() {
 # One worker per workflow, never nested workers. The parent forwards signals and
 # waits for EXIT recovery to finish before returning to the interactive menu.
 # A signal exits the worker, rather than returning into a mutating function.
+
+# /proc start time (field 22) of a PID; empty when /proc is unavailable.
+# Protects against PID reuse after a reboot or long uptime.
+z2m_proc_starttime() {
+    [ -r "/proc/$1/stat" ] || return 0
+    # comm may contain spaces: drop everything up to its closing bracket first.
+    sed 's/.*) //' "/proc/$1/stat" 2>/dev/null | awk '{ print $20 }'
+}
+
+# The lock holder is alive only if its recorded PID still exists and was not
+# reused by another process. A lock without a recorded PID is a leftover from
+# a crashed run or an older manager version and is always treated as stale.
+z2m_lock_holder_alive() {
+    local lock_dir="$1" pid start cur
+    pid=$(cat "${lock_dir}/pid" 2>/dev/null)
+    case "${pid}" in ''|*[!0-9]*) return 1 ;; esac
+    cur=$(z2m_proc_starttime "${pid}")
+    start=$(cat "${lock_dir}/start" 2>/dev/null)
+    [ -n "${start}" ] && [ -n "${cur}" ] && [ "${start}" != "${cur}" ] && return 1
+    kill -0 "${pid}" 2>/dev/null
+}
+
 z2m_run_guarded() {
     [ "${Z2M_GUARDED:-0}" = 1 ] && { "$@"; return $?; }
     z2m_prepare_runtime || return 1
     local runtime="${Z2M_TMP}" saved_traps worker rc signal_rc=0 backup work
     saved_traps=$(trap)
     mkdir "${runtime}/operation.lock" 2>/dev/null || {
-        printf 'Другая операция уже выполняется: %s/operation.lock\n' "${runtime}" >&2
-        return 1
+        if z2m_lock_holder_alive "${runtime}/operation.lock"; then
+            printf 'Другая операция уже выполняется: %s/operation.lock (PID %s)\n' \
+                "${runtime}" "$(cat "${runtime}/operation.lock/pid" 2>/dev/null)" >&2
+            return 1
+        fi
+        # Holder died (SIGKILL, closed terminal, power loss): the lock is stale.
+        printf 'Обнаружена блокировка от завершённого процесса — удаляю: %s/operation.lock\n' \
+            "${runtime}" >&2
+        rm -r "${runtime}/operation.lock" 2>/dev/null
+        mkdir "${runtime}/operation.lock" 2>/dev/null || {
+            printf 'Другая операция уже выполняется: %s/operation.lock\n' "${runtime}" >&2
+            return 1
+        }
     }
+    printf '%s\n' "$$" > "${runtime}/operation.lock/pid"
+    z2m_proc_starttime "$$" > "${runtime}/operation.lock/start" 2>/dev/null
     work=$(mktemp -d "${runtime}/operation.XXXXXX") || {
-        rmdir "${runtime}/operation.lock"; return 1;
+        rm -r "${runtime}/operation.lock" 2>/dev/null; return 1;
     }
     local Z2M_TMP="${work}"
     backup=$(zapret_backup_config) || {
-        rmdir "${work}" "${runtime}/operation.lock"; return 1;
+        rm -r "${work}" "${runtime}/operation.lock" 2>/dev/null; return 1;
     }
     trap 'signal_rc=130; [ -z "${worker:-}" ] || kill -TERM "${worker}" 2>/dev/null' INT
     trap 'signal_rc=143; [ -z "${worker:-}" ] || kill -TERM "${worker}" 2>/dev/null' TERM
@@ -347,7 +382,7 @@ z2m_run_guarded() {
         rm -r "${work}"
         [ "${signal_rc}" -eq 0 ] || rc="${signal_rc}"
     fi
-    rmdir "${runtime}/operation.lock"
+    rm -r "${runtime}/operation.lock" 2>/dev/null
     return "${rc}"
 } 9<&0
 
