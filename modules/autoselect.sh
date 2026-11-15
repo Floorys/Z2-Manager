@@ -62,8 +62,9 @@ catalog_autoselect() {
     while [ "${i}" -le "${CATALOG_COUNT}" ]; do
         name=$(catalog_get_name "${i}")
         opt=$(catalog_get_opt "${i}")
-        printf "%b⏳ Тест: %s [%s/%s]%b\r" "${YELLOW}" "$(printf "%.30s" "${name}")" "${i}" "${CATALOG_COUNT}" "${NC}"
+        printf "\r\033[K%b[..] Тест: %s [%s/%s]%b" "${YELLOW}" "${name}" "${i}" "${CATALOG_COUNT}" "${NC}"
         if [ -z "${opt}" ] || ! zapret_set_opt "${opt}"; then
+            printf "\r\033[K"
             tui_warn "${name}: не удалось применить; предыдущая конфигурация восстановлена."
             i=$((i + 1))
             continue
@@ -74,13 +75,17 @@ catalog_autoselect() {
         score=$(echo "${result}" | awk '{print $3 + 0}')
         maximum=$(echo "${result}" | awk '{print $4 + 0}')
         fail=$((total - ok))
+        printf "\r\033[K"
         tui_print_result_row "${name}" "${ok}" "${fail}" "${total}"
         if [ "${score}" -gt "${best_score}" ] || {
             [ "${score}" -eq "${best_score}" ] && [ "${fail}" -lt "${best_fail}" ];
         }; then
             best_idx="${i}"; best_score="${score}"; best_fail="${fail}"
         fi
-        [ "${maximum}" -gt 0 ] && [ "${score}" -eq "${maximum}" ] && [ "${fail}" -eq 0 ] && break
+        if [ "${maximum}" -gt 0 ] && [ "${score}" -eq "${maximum}" ] && [ "${fail}" -eq 0 ]; then
+            tui_success "Найдена оптимальная стратегия (${name}) с результатом 100%!"
+            break
+        fi
         i=$((i + 1))
     done
     if [ "${best_score}" -le 0 ]; then
@@ -119,7 +124,7 @@ run_test_current_strategy() {
     fi
     tui_info "Опрос контрольных доменов (HTTP и TLS 1.2)..."
     printf '%-28s %-20s %-12s %-12s\n' "Хост" "Категория" "HTTP Доступ" "TLS 1.2"
-    printf '%b───────────────────────────────────────────────────────────────────%b\n' "${DGRAY}" "${NC}"
+    printf '%b-------------------------------------------------------------------%b\n' "${DGRAY}" "${NC}"
     local http_map tls_map h http_res tls_res http_str tls_str
     http_map=$(probe_hosts_map "${DIAGNOSTIC_HOSTS}")
     tls_map=$(probe_hosts_map "${DIAGNOSTIC_HOSTS}" "${Z2M_PROBE_TIMEOUT:-2}" tls12)

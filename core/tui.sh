@@ -8,7 +8,7 @@
 [ -f "${Z2M_DIR}/core/config.sh" ] && . "${Z2M_DIR}/core/config.sh"
 
 tui_banner() {
-    clear 2>/dev/null || printf "\033c"
+    clear 2>/dev/null || printf "\033[2J\033[H"
     printf "%b" "${CYAN}"
     cat << "EOF"
   ███████╗ █████╗ ██████╗ ██████╗ ███████╗████████╗██████╗     ███╗   ███╗
@@ -20,29 +20,29 @@ tui_banner() {
 EOF
     printf "%b" "${NC}"
     printf "%b  Zapret2 Manager v%s | Asterlike & 1andrevich Architecture%b\n" "${DGRAY}" "${Z2M_VERSION}" "${NC}"
-    printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
+    printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 }
 
 tui_header() {
     local title="$1"
     printf "%b%b%s%b\n" "${BOLD}" "${WHITE}" "${title}" "${NC}"
-    printf "%b%s%b\n\n" "${DGRAY}" "───────────────────────────────────────────────────────────────────" "${NC}"
+    printf "%b%s%b\n\n" "${DGRAY}" "-------------------------------------------------------------------" "${NC}"
 }
 
 tui_info() {
-    printf "%bℹ %s%b\n" "${CYAN}" "$1" "${NC}"
+    printf "%b[*] %s%b\n" "${CYAN}" "$1" "${NC}"
 }
 
 tui_success() {
-    printf "%b✔ %s%b\n" "${GREEN}" "$1" "${NC}"
+    printf "%b[+] %s%b\n" "${GREEN}" "$1" "${NC}"
 }
 
 tui_warn() {
-    printf "%b⚠ %s%b\n" "${YELLOW}" "$1" "${NC}"
+    printf "%b[!] %s%b\n" "${YELLOW}" "$1" "${NC}"
 }
 
 tui_error() {
-    printf "%b✖ %s%b\n" "${RED}" "$1" "${NC}" >&2
+    printf "%b[-] %s%b\n" "${RED}" "$1" "${NC}" >&2
 }
 
 tui_step() {
@@ -86,8 +86,8 @@ tui_prompt() {
 }
 
 tui_print_result_table_header() {
-    printf "%b%-36s %-10s %-10s %-10s%b\n" "${BOLD}" "Стратегия / Бандл" "Успешно" "Ошибок" "Статус" "${NC}"
-    printf "%b───────────────────────────────────────────────────────────────────%b\n" "${DGRAY}" "${NC}"
+    printf "%b%-42s %-10s %-10s %-10s%b\n" "${BOLD}" "Стратегия / Бандл" "Успешно" "Ошибок" "Статус" "${NC}"
+    printf "%b-------------------------------------------------------------------%b\n" "${DGRAY}" "${NC}"
 }
 
 tui_print_result_row() {
@@ -95,20 +95,18 @@ tui_print_result_row() {
     local ok="$2"
     local fail="$3"
     local total="$4"
-    local glyph="≈"
+    local glyph="[~]"
     local color="${YELLOW}"
 
     if [ "${fail}" -eq 0 ] && [ "${ok}" -gt 0 ]; then
-        glyph="✓"
+        glyph="[+]"
         color="${GREEN}"
     elif [ "${ok}" -eq 0 ]; then
-        glyph="✗"
+        glyph="[-]"
         color="${RED}"
     fi
 
-    # Trim name to fit table
-    local short_name
-    short_name=$(printf "%.34s" "${name}")
-    printf "%-36s %b%-10s%b %b%-10s%b %b%s %s/%s%b\n" \
-        "${short_name}" "${GREEN}" "${ok}" "${NC}" "${RED}" "${fail}" "${NC}" "${color}" "${glyph}" "${ok}" "${total}" "${NC}"
+    # Do not cut multibyte UTF-8 characters with byte-based printf formatters
+    printf "%-42s %b%-10s%b %b%-10s%b %b%s %s/%s%b\n" \
+        "${name}" "${GREEN}" "${ok}" "${NC}" "${RED}" "${fail}" "${NC}" "${color}" "${glyph}" "${ok}" "${total}" "${NC}"
 }

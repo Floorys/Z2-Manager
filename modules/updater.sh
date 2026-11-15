@@ -699,7 +699,7 @@ run_updates_menu() {
 
         printf "  %bZapret2         :%b %b\n" "${BOLD}" "${NC}" "${zap_status_badge}"
         printf "  %bZapret2-Manager :%b %bv%s%b %b(Floorys/Z2-Manager)%b\n" "${BOLD}" "${NC}" "${CYAN}" "${Z2M_VERSION}" "${NC}" "${DGRAY}" "${NC}"
-        printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
+        printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 
         if [ "${can_update_zapret}" -eq 1 ]; then
             printf "  %b1.%b 🛡️ %b%bОбновить Zapret2 до v%s%b  %b(скачать и установить пакет от 1andrevich)%b\n" \

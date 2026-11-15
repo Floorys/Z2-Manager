@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.bin binary
+*.sh text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.cjs text eol=lf
+*.html text eol=lf

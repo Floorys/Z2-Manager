@@ -20,7 +20,7 @@ run_ports_menu() {
 
         printf "  %bТекущие порты TCP:%b %b%s%b\n" "${BOLD}" "${NC}" "${CYAN}" "${cur_tcp}" "${NC}"
         printf "  %bТекущие порты UDP:%b %b%s%b\n" "${BOLD}" "${NC}" "${CYAN}" "${cur_udp}" "${NC}"
-        printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
+        printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 
         printf "  1. 🚀 Установить рекомендуемые порты (Web + Discord Voice + Cloudflare)\n"
         printf "     %bTCP: %s%b\n" "${DGRAY}" "${DEFAULT_PORTS_TCP}" "${NC}"

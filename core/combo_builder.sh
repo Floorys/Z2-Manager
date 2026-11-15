@@ -55,7 +55,7 @@ combo_build_args() {
     local opt="--ctrack-disable=0 --ipcache-lifetime=8400 --ipcache-hostname=1${blobs}"
 
     # HTTP must be profiled as well as intercepted; TLS-only rules ignore port 80.
-    opt="${opt} --filter-tcp=80 --filter-l7=http ${filter_ex} --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2"
+    opt="${opt} --filter-tcp=80 --filter-l7=http ${filter_ex} --payload=http_req --lua-desync=fake:tcp_md5 --lua-desync=multisplit:pos=method+2"
 
     # Profile 1: Discord TLS
     opt="${opt} --new --filter-tcp=443-65535 --filter-l7=tls ${filter_dc} --out-range=-d10 --payload=tls_client_hello ${discord_tls}"
@@ -90,7 +90,7 @@ combo_build_single_test_args() {
     blobs=$(combo_blob_args) || return 1
 
     local opt="--ctrack-disable=0 --ipcache-lifetime=8400 --ipcache-hostname=1${blobs}"
-    opt="${opt} --filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2"
+    opt="${opt} --filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:tcp_md5 --lua-desync=multisplit:pos=method+2"
     opt="${opt} --new --filter-tcp=443-65535 --filter-l7=tls --out-range=-d10 --payload=tls_client_hello ${candidate_tls}"
     opt="${opt} --new --filter-udp=443-65535 --filter-l7=quic --payload=quic_initial --lua-desync=fake:blob=quic_generic:repeats=6"
 

@@ -149,7 +149,7 @@ service_menu() {
         short_opt=$(printf "%.55s" "${cur_opt}")
         [ ${#cur_opt} -gt 55 ] && short_opt="${short_opt}..."
         printf "  %bПараметры NFQWS2 :%b %b%s%b\n" "${BOLD}" "${NC}" "${CYAN}" "${short_opt:-по умолчанию}" "${NC}"
-        printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
+        printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 
         printf "  1. Запустить службу\n"
         printf "  2. Остановить службу\n"
@@ -385,7 +385,7 @@ main_menu() {
         printf "  %bПорты TCP  :%b %b%s%b\n" "${BOLD}" "${NC}" "${GREEN}" "${short_tcp}" "${NC}"
         printf "  %bПорты UDP  :%b %b%s%b\n" "${BOLD}" "${NC}" "${GREEN}" "${short_udp}" "${NC}"
         printf "  %bDNS / DoH  :%b %b\n" "${BOLD}" "${NC}" "${doh_stat}"
-        printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
+        printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 
         printf "  %b1.%b 🛡️ %bНастройка и служба Zapret2%b    %b(статус, запуск, перезапуск, автозапуск)%b\n" "${BOLD}" "${NC}" "${BLUE}" "${NC}" "${DGRAY}" "${NC}"
         printf "  %b2.%b 🧬 %bПодбор и генерация стратегий%b  %b(генератор Asterlike, автоподбор, тесты)%b\n" "${BOLD}" "${NC}" "${MAGENTA}" "${NC}" "${DGRAY}" "${NC}"

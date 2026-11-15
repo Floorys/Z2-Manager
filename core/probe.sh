@@ -19,7 +19,7 @@ probe_get_host_category() {
     local h="$1"
     case "${h}" in
         www.youtube.com)    echo "YouTube (Web)" ;;
-        googlevideo.com)    echo "YouTube (Видео)" ;;
+        googlevideo.com|redirector.googlevideo.com) echo "YouTube (Видео)" ;;
         i.ytimg.com)        echo "YouTube (Превью)" ;;
         discord.com)        echo "Discord (Web)" ;;
         gateway.discord.gg) echo "Discord (Голос/GW)" ;;

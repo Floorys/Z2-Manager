@@ -109,7 +109,7 @@ strategy_generator_worker() {
     t_start=$(date +%s)
 
     printf "%b%-4s %-32s %-12s %-12s %-8s%b\n" "${BOLD}" "№" "Кандидат" "Discord" "YouTube" "GW-Safe" "${NC}"
-    printf "%b───────────────────────────────────────────────────────────────────%b\n" "${DGRAY}" "${NC}"
+    printf "%b-------------------------------------------------------------------%b\n" "${DGRAY}" "${NC}"
 
     local cand_scores_d=""
     local cand_scores_y=""
@@ -127,17 +127,15 @@ strategy_generator_worker() {
             gw_safe="${GREEN}Да${NC}"
         fi
 
-        local short_name
-        short_name=$(printf "%.30s" "${c_name}")
-
-        printf "%-4s %-32s %b⏳ Тест... [%s/%s, прошло %ss]%b\r" "${i}" "${short_name}" "${YELLOW}" "${i}" "${CANDIDATES_COUNT}" "$(( $(date +%s) - t_start ))" "${NC}"
+        printf "\r\033[K%-4s %-32s %b[..] Тест... [%s/%s, %ss]%b" \
+            "${i}" "${c_name}" "${YELLOW}" "${i}" "${CANDIDATES_COUNT}" "$(( $(date +%s) - t_start ))" "${NC}"
 
         # Apply candidate as standalone test rule
         local test_opt
         test_opt=$(combo_build_single_test_args "${c_tls}")
         if ! zapret_set_opt "${test_opt}"; then
-            printf "%-4s %-32s %b%-12s%b %b%-12s%b %b\n" \
-                "${i}" "${short_name}" "${RED}" "Сбой" "${NC}" "${RED}" "Сбой" "${NC}" "${gw_safe}"
+            printf "\r\033[K%-4s %-32s %b%-12s%b %b%-12s%b %b\n" \
+                "${i}" "${c_name}" "${RED}" "Сбой" "${NC}" "${RED}" "Сбой" "${NC}" "${gw_safe}"
             cand_scores_d="${cand_scores_d} ${i}:0"
             cand_scores_y="${cand_scores_y} ${i}:0"
             i=$(( i + 1 ))
@@ -146,8 +144,8 @@ strategy_generator_worker() {
 
         # If daemon crashed or failed to start, score 0 and move on immediately
         if ! zapret_is_running; then
-            printf "%-4s %-32s %b%-12s%b %b%-12s%b %b\n" \
-                "${i}" "${short_name}" "${RED}" "Сбой" "${NC}" "${RED}" "Сбой" "${NC}" "${gw_safe}"
+            printf "\r\033[K%-4s %-32s %b%-12s%b %b%-12s%b %b\n" \
+                "${i}" "${c_name}" "${RED}" "Сбой" "${NC}" "${RED}" "Сбой" "${NC}" "${gw_safe}"
             cand_scores_d="${cand_scores_d} ${i}:0"
             cand_scores_y="${cand_scores_y} ${i}:0"
             i=$(( i + 1 ))
@@ -155,13 +153,16 @@ strategy_generator_worker() {
         fi
 
         # Minimum 2 repeats per strategy to eliminate transient flukes.
-        # Six host checks of one repeat run concurrently (probe_counts2),
-        # so a repeat costs one probe timeout instead of six.
+        # Host checks run concurrently (probe_counts2) for high speed.
         local d_score_rep1=0 d_score_rep2=0
         local y_score_rep1=0 y_score_rep2=0
         local reps res
         for reps in 1 2; do
             if [ "${reps}" = "2" ]; then
+                # If neither service responded at all on repeat 1, skip repeat 2
+                if [ "${d_score_rep1}" -eq 0 ] && [ "${y_score_rep1}" -eq 0 ]; then
+                    break
+                fi
                 # Short pause between repeats
                 sleep "${Z2M_PROBE_REPEAT_DELAY:-1}"
             fi
@@ -187,14 +188,15 @@ strategy_generator_worker() {
         [ "${y_score}" -gt 0 ] && y_col="${YELLOW}"
         [ "${y_score}" -eq 6 ] && y_col="${GREEN}"
 
-        printf "%-4s %-32s %b%s/6%b        %b%s/6%b        %b\n" \
-            "${i}" "${short_name}" "${d_col}" "${d_score}" "${NC}" "${y_col}" "${y_score}" "${NC}" "${gw_safe}"
+        printf "\r\033[K%-4s %-32s %b%s/6%b        %b%s/6%b        %b\n" \
+            "${i}" "${c_name}" "${d_col}" "${d_score}" "${NC}" "${y_col}" "${y_score}" "${NC}" "${gw_safe}"
 
         cand_scores_d="${cand_scores_d} ${i}:${d_score}"
         cand_scores_y="${cand_scores_y} ${i}:${y_score}"
 
         # Early exit check: 100% (6/6) on both repeats and gateway-friendly
         if [ "${d_score}" -eq 6 ] && [ "${y_score}" -eq 6 ] && is_gateway_friendly "${c_tls}"; then
+            printf "\n"
             tui_success "Найден надежный универсальный бандл #${i} (${c_name})! Переход к сборке."
             perfect_cand="${i}"
             break
@@ -274,24 +276,27 @@ strategy_generator_worker() {
             # Both host lists of a repeat run concurrently (probe_lists2).
             local cd_res1 cd_res2 cy_res1 cy_res2 p1 p2
             p1=$(probe_lists2 "${DISCORD_PROBE_HOSTS}" "${YOUTUBE_PROBE_HOSTS}")
-            sleep "${Z2M_PROBE_REPEAT_DELAY:-1}"
-            p2=$(probe_lists2 "${DISCORD_PROBE_HOSTS}" "${YOUTUBE_PROBE_HOSTS}")
             cd_res1=$(echo "${p1}" | sed -n 1p)
             cy_res1=$(echo "${p1}" | sed -n 2p)
-            cd_res2=$(echo "${p2}" | sed -n 1p)
-            cy_res2=$(echo "${p2}" | sed -n 2p)
-
             local cd_s1 cd_s2 cy_s1 cy_s2
             local cd_m1 cd_m2 cy_m1 cy_m2
             cd_s1=$(echo "${cd_res1}" | awk '{print $3 + 0}')
-            cd_s2=$(echo "${cd_res2}" | awk '{print $3 + 0}')
             cy_s1=$(echo "${cy_res1}" | awk '{print $3 + 0}')
-            cy_s2=$(echo "${cy_res2}" | awk '{print $3 + 0}')
-
             cd_m1=$(echo "${cd_res1}" | awk '{print $4 + 0}')
-            cd_m2=$(echo "${cd_res2}" | awk '{print $4 + 0}')
             cy_m1=$(echo "${cy_res1}" | awk '{print $4 + 0}')
-            cy_m2=$(echo "${cy_res2}" | awk '{print $4 + 0}')
+
+            if [ "${cd_s1}" -eq 0 ] && [ "${cy_s1}" -eq 0 ]; then
+                cd_s2=0; cy_s2=0; cd_m2="${cd_m1}"; cy_m2="${cy_m1}"
+            else
+                sleep "${Z2M_PROBE_REPEAT_DELAY:-1}"
+                p2=$(probe_lists2 "${DISCORD_PROBE_HOSTS}" "${YOUTUBE_PROBE_HOSTS}")
+                cd_res2=$(echo "${p2}" | sed -n 1p)
+                cy_res2=$(echo "${p2}" | sed -n 2p)
+                cd_s2=$(echo "${cd_res2}" | awk '{print $3 + 0}')
+                cy_s2=$(echo "${cy_res2}" | awk '{print $3 + 0}')
+                cd_m2=$(echo "${cd_res2}" | awk '{print $4 + 0}')
+                cy_m2=$(echo "${cy_res2}" | awk '{print $4 + 0}')
+            fi
 
             # Sum of two repeats instead of integer average
             local cd_score=$(( cd_s1 + cd_s2 ))

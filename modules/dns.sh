@@ -40,7 +40,7 @@ run_dns_menu() {
             doh_status="${GREEN}Работает (https-dns-proxy)${NC}"
         fi
         printf "  %bСтатус DoH :%b %b\n" "${BOLD}" "${NC}" "${doh_status}"
-        printf "%b  ───────────────────────────────────────────────────────────────────%b\n\n" "${DGRAY}" "${NC}"
+        printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 
         printf "  1. 🩺 Проверить DNS на подмену (DNS Poisoning / заглушка РКН)\n"
         printf "  2. 🌐 Настроить DNS-over-HTTPS (DoH: Google, Quad9, Xbox, DNS.ru...)\n"
