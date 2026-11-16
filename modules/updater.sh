@@ -345,6 +345,8 @@ zapret_run_update() {
             cleanup_zapret_update
             trap - INT TERM
             return 1
+        else
+            tui_warn "Не удалось загрузить новый ключ подписи APK; используется сохраненный."
         fi
 
         if [ -s "${luci_pkg}" ]; then
@@ -450,7 +452,7 @@ zapret_run_update() {
 # Self-update Zapret2-Manager from GitHub repository (Floorys/Z2-Manager)
 run_self_update() {
     tui_banner
-    tui_header "🔄 Обновление Zapret2-Manager"
+    tui_header "Обновление Zapret2-Manager"
     tui_info "Загрузка актуальной версии из репозитория ${Z2M_GITHUB_REPO:-Floorys/Z2-Manager}..."
 
     local update_url="https://github.com/${Z2M_GITHUB_REPO:-Floorys/Z2-Manager}/archive/refs/heads/main.tar.gz"
@@ -607,7 +609,7 @@ EOF
 # Combined update: update Zapret2 and then update Zapret2-Manager
 run_update_all() {
     tui_banner
-    tui_header "🚀 Полное обновление: Zapret2 + Zapret2-Manager"
+    tui_header "Полное обновление: Zapret2 + Zapret2-Manager"
     tui_info "Шаг 1 из 2: Обновление пакета Zapret2..."
     if ! zapret_run_update "" "0" "1"; then
         tui_error "Обновление Zapret2 завершилось ошибкой; самообновление менеджера отменено."
@@ -656,7 +658,7 @@ run_check_updates_cli() {
 run_updates_menu() {
     while true; do
         tui_banner
-        tui_header "🔄 Центр обновлений (Zapret2 и Z2-Manager)"
+        tui_header "Центр обновлений (Zapret2 и Z2-Manager)"
 
         local model owrt_ver
         model="$(cat /tmp/sysinfo/model 2>/dev/null || grep -i 'machine' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//')"
@@ -672,7 +674,7 @@ run_updates_menu() {
         latest_zap=$(zapret_get_latest_version)
 
         tui_banner
-        tui_header "🔄 Центр обновлений (Zapret2 и Z2-Manager)"
+        tui_header "Центр обновлений (Zapret2 и Z2-Manager)"
 
         printf "  %bУстройство      :%b %b%s%b (%s)\n" "${BOLD}" "${NC}" "${CYAN}" "${model}" "${NC}" "${owrt_ver}"
         printf "  %bАрхитектура     :%b %b%s%b (%s)\n" "${BOLD}" "${NC}" "${GREEN}" "${SYSTEM_ARCH}" "${NC}" "${SYSTEM_PKG_MGR}"
@@ -688,10 +690,10 @@ run_updates_menu() {
             vercmp "${cur_zap}" "${latest_zap}"
             local c=$?
             if [ "$c" -eq 2 ]; then
-                zap_status_badge="${YELLOW}v${cur_zap}${NC}  ➔  ${GREEN}${BOLD}[Доступно обновление v${latest_zap}]${NC} 🚀"
+                zap_status_badge="${YELLOW}v${cur_zap}${NC} -> ${GREEN}${BOLD}[Доступно обновление v${latest_zap}]${NC}"
                 can_update_zapret=1
             elif [ "$c" -eq 0 ]; then
-                zap_status_badge="${GREEN}v${cur_zap}${NC} ${GREEN}(Актуальная версия ✔)${NC}"
+                zap_status_badge="${GREEN}v${cur_zap}${NC} ${GREEN}(Актуальная версия [+])${NC}"
             else
                 zap_status_badge="${CYAN}v${cur_zap}${NC} ${YELLOW}(Тестовая / новее релиза)${NC}"
             fi
@@ -702,15 +704,15 @@ run_updates_menu() {
         printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 
         if [ "${can_update_zapret}" -eq 1 ]; then
-            printf "  %b1.%b 🛡️ %b%bОбновить Zapret2 до v%s%b  %b(скачать и установить пакет от 1andrevich)%b\n" \
+            printf "  %b1.%b %b%bОбновить Zapret2 до v%s%b  %b(скачать и установить пакет от 1andrevich)%b\n" \
                 "${BOLD}" "${NC}" "${GREEN}" "${BOLD}" "${latest_zap:-latest}" "${NC}" "${DGRAY}" "${NC}"
         else
-            printf "  %b1.%b 🛡️ Переустановить Zapret2 v%s     %b(принудительная переустановка пакета)%b\n" \
+            printf "  %b1.%b Переустановить Zapret2 v%s     %b(принудительная переустановка пакета)%b\n" \
                 "${BOLD}" "${NC}" "${latest_zap:-latest}" "${DGRAY}" "${NC}"
         fi
-        printf "  %b2.%b 🔄 Обновить Zapret2-Manager        %b(самообновление менеджера с GitHub)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b3.%b 🚀 Обновить всё                    %b(Zapret2 + Zapret2-Manager в один шаг)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b4.%b 🔍 Повторить проверку обновлений\n" "${BOLD}" "${NC}"
+        printf "  %b2.%b Обновить Zapret2-Manager        %b(самообновление менеджера с GitHub)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b3.%b Обновить всё                    %b(Zapret2 + Zapret2-Manager в один шаг)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b4.%b Повторить проверку обновлений\n" "${BOLD}" "${NC}"
         printf "  %b0.%b Назад в главное меню\n\n" "${BOLD}" "${NC}"
 
         local choice

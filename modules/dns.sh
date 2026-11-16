@@ -29,7 +29,7 @@ is_doh_running() {
 run_dns_menu() {
     while true; do
         tui_banner
-        tui_header "🔐 Меню настройки DNS и DNS-over-HTTPS (DoH)"
+        tui_header "Меню настройки DNS и DNS-over-HTTPS (DoH)"
 
         local cur_dns
         cur_dns=$(get_current_dns)
@@ -42,11 +42,11 @@ run_dns_menu() {
         printf "  %bСтатус DoH :%b %b\n" "${BOLD}" "${NC}" "${doh_status}"
         printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 
-        printf "  1. 🩺 Проверить DNS на подмену (DNS Poisoning / заглушка РКН)\n"
-        printf "  2. 🌐 Настроить DNS-over-HTTPS (DoH: Google, Quad9, Xbox, DNS.ru...)\n"
-        printf "  3. 🛡️ Установить безопасные DNS в dnsmasq (без шифрования)\n"
-        printf "  4. ⏹️ Отключить DoH и сбросить DNS на стандартные провайдера\n"
-        printf "  0. ↩️ Назад в главное меню\n\n"
+        printf "  1. Проверить DNS на подмену (DNS Poisoning / заглушка РКН)\n"
+        printf "  2. Настроить DNS-over-HTTPS (DoH: Google, Quad9, Xbox, DNS.ru...)\n"
+        printf "  3. Установить безопасные DNS в dnsmasq (без шифрования)\n"
+        printf "  4. Отключить DoH и сбросить DNS на стандартные провайдера\n"
+        printf "  0. Назад в главное меню\n\n"
 
         local choice
         choice=$(tui_prompt "Выберите действие" "0")

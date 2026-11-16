@@ -223,8 +223,16 @@ probe_hosts_map() {
     local timeout="${2:-${Z2M_PROBE_TIMEOUT:-2}}"
     local mode="${3:-http}"
     local h i=0 passed ok dir="" pids="" p
+    local max_jobs="${Z2M_PROBE_MAX_JOBS:-3}" running=0
+    local use_parallel="${Z2M_PROBE_PARALLEL:-1}"
 
-    if [ "${Z2M_PROBE_PARALLEL:-1}" = "1" ]; then
+    if [ "${use_parallel}" = "1" ] && [ -r /proc/meminfo ]; then
+        local mem_kb
+        mem_kb=$(awk '/MemTotal/ {print $2; exit}' /proc/meminfo 2>/dev/null)
+        [ -n "${mem_kb}" ] && [ "${mem_kb}" -lt 120000 ] && use_parallel=0
+    fi
+
+    if [ "${use_parallel}" = "1" ]; then
         z2m_prepare_runtime 2>/dev/null
         dir=$(mktemp -d "${Z2M_TMP}/probe.XXXXXX" 2>/dev/null) || dir=""
     fi
@@ -242,6 +250,14 @@ probe_hosts_map() {
                 printf '%s' "${ok}" > "${dir}/${i}"
             ) &
             pids="${pids} $!"
+            running=$(( running + 1 ))
+            if [ "${running}" -ge "${max_jobs}" ]; then
+                for p in ${pids}; do
+                    wait "${p}" 2>/dev/null
+                done
+                pids=""
+                running=0
+            fi
         done
         for p in ${pids}; do
             wait "${p}" 2>/dev/null

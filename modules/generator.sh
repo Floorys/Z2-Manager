@@ -23,7 +23,7 @@ run_strategy_generator() {
 
 strategy_generator_worker() {
     tui_banner
-    tui_header "🧬 Генератор персональной стратегии (Asterlike Two-Pass Generator)"
+    tui_header "Генератор персональной стратегии (Asterlike Two-Pass Generator)"
 
     tui_info "Этот режим подбирает уникальную связку десинка:"
     tui_info "1. Замер baseline: проверка текущей стратегии тем же набором проб."

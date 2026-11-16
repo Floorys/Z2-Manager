@@ -87,6 +87,8 @@ CURL_INTERFACE="${CURL_INTERFACE:-}"
 Z2M_PROBE_TIMEOUT="${Z2M_PROBE_TIMEOUT:-2}"
 # Probe hosts concurrently (1) or strictly sequentially (0) for very weak routers.
 Z2M_PROBE_PARALLEL="${Z2M_PROBE_PARALLEL:-1}"
+# Maximum concurrent probe processes when parallel is enabled (safe batching)
+Z2M_PROBE_MAX_JOBS="${Z2M_PROBE_MAX_JOBS:-3}"
 # Pause (seconds) between measurement repeats inside generator/autoselect.
 Z2M_PROBE_REPEAT_DELAY="${Z2M_PROBE_REPEAT_DELAY:-1}"
 # Pause (seconds) after a service restart before probing the new strategy.

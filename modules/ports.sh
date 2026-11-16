@@ -12,7 +12,7 @@
 run_ports_menu() {
     while true; do
         tui_banner
-        tui_header "🌐 Настройка перехватываемых портов TCP и UDP"
+        tui_header "Настройка перехватываемых портов TCP и UDP"
 
         local cur_tcp cur_udp
         cur_tcp=$(zapret_get_ports_tcp)
@@ -22,18 +22,18 @@ run_ports_menu() {
         printf "  %bТекущие порты UDP:%b %b%s%b\n" "${BOLD}" "${NC}" "${CYAN}" "${cur_udp}" "${NC}"
         printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 
-        printf "  1. 🚀 Установить рекомендуемые порты (Web + Discord Voice + Cloudflare)\n"
+        printf "  1. Установить рекомендуемые порты (Web + Discord Voice + Cloudflare)\n"
         printf "     %bTCP: %s%b\n" "${DGRAY}" "${DEFAULT_PORTS_TCP}" "${NC}"
         printf "     %bUDP: %s%b\n\n" "${DGRAY}" "${DEFAULT_PORTS_UDP}" "${NC}"
 
-        printf "  2. 🎮 Установить расширенные порты для игр и медиа (Xtreme Gaming)\n"
+        printf "  2. Установить расширенные порты для игр и медиа (Xtreme Gaming)\n"
         printf "     %bTCP: 80,443,2053,2083,2087,2096,8443,25565,27015-27030%b\n" "${DGRAY}" "${NC}"
         printf "     %bUDP: 443,19294-19344,27015-27030,50000-65535%b\n\n" "${DGRAY}" "${NC}"
 
-        printf "  3. ✏️ Задать порты TCP вручную\n"
-        printf "  4. ✏️ Задать порты UDP вручную\n"
-        printf "  5. ↩️ Сбросить на минимальные стандартные порты (80,443 / 443)\n"
-        printf "  0. ↩️ Назад в главное меню\n\n"
+        printf "  3. Задать порты TCP вручную\n"
+        printf "  4. Задать порты UDP вручную\n"
+        printf "  5. Сбросить на минимальные стандартные порты (80,443 / 443)\n"
+        printf "  0. Назад в главное меню\n\n"
 
         local choice
         choice=$(tui_prompt "Выберите действие" "1")

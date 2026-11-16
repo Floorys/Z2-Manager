@@ -427,8 +427,11 @@ z2m_lock_holder_alive() {
 z2m_run_guarded() {
     [ "${Z2M_GUARDED:-0}" = 1 ] && { "$@"; return $?; }
     z2m_prepare_runtime || return 1
-    local runtime="${Z2M_TMP}" saved_traps worker rc signal_rc=0 backup work
-    saved_traps=$(trap)
+    local runtime="${Z2M_TMP}" saved_traps worker rc signal_rc=0 backup work trap_file
+    trap_file="${runtime}/traps.$$"
+    trap > "${trap_file}" 2>/dev/null
+    saved_traps=$(cat "${trap_file}" 2>/dev/null)
+    rm -f "${trap_file}" 2>/dev/null
     mkdir "${runtime}/operation.lock" 2>/dev/null || {
         local lock_pid
         lock_pid=$(cat "${runtime}/operation.lock/pid" 2>/dev/null)

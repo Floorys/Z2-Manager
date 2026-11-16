@@ -157,6 +157,7 @@ else
         mipsel*)  FALLBACK_ARCH="mipsel_24kc" ;;
         mips*)    FALLBACK_ARCH="mips_24kc" ;;
         x86_64*)  FALLBACK_ARCH="x86_64" ;;
+        arm*cortex-a9*) FALLBACK_ARCH="arm_cortex-a9_vfpv3-d16" ;;
         arm*)     FALLBACK_ARCH="arm_cortex-a7_neon-vfpv4" ;;
         *)        FALLBACK_ARCH="" ;;
     esac
@@ -171,7 +172,8 @@ else
             cp -f "${KEY_FILE}" /etc/apk/keys/zapret2-1andrevich.pub
             chmod 644 /etc/apk/keys/zapret2-1andrevich.pub 2>/dev/null
         elif [ ! -s /etc/apk/keys/zapret2-1andrevich.pub ]; then
-            printf "%b\n" "${RED}Не удалось безопасно получить ключ подписи APK.${NC}" >&2
+            printf "%b\n" "${RED}Ошибка: не удалось получить ключ подписи APK zapret2-1andrevich.pub. Установка прервана.${NC}" >&2
+            exit 1
         fi
         install_download "${ZAPRET_BASE_URL}/zapret2_${ARCH}.apk" "${PKG_FILE}"
         if [ ! -s "${PKG_FILE}" ] && [ -n "${FALLBACK_ARCH}" ]; then
@@ -252,7 +254,10 @@ else
             unzip -q -o "${DOWNLOAD_ZIP}" -d "${TMP_UNPACK}" 2>/dev/null
         fi
     else
-        tar -xzf "${DOWNLOAD_TAR}" -C "${TMP_UNPACK}" 2>/dev/null
+        if ! tar -tzf "${DOWNLOAD_TAR}" >/dev/null 2>&1 || ! tar -xzf "${DOWNLOAD_TAR}" -C "${TMP_UNPACK}" 2>/dev/null; then
+            printf "%b\n" "${RED}Ошибка: архив Z2-Manager поврежден или не распаковывается!${NC}" >&2
+            exit 1
+        fi
     fi
 
     EXTRACTED_DIR="$(find "${TMP_UNPACK}" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -n1)"

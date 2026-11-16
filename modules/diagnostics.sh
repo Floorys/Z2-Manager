@@ -107,9 +107,9 @@ run_diagnostics() {
 
         printf "%-24s %-18s " "${host}" "${cat_name}"
         if [ "${is_ok}" -eq 1 ]; then
-            printf "%b%-10s%b " "${GREEN}" "✓ Доступ" "${NC}"
+            printf "%b%-10s%b " "${GREEN}" "[+] Доступ" "${NC}"
         else
-            printf "%b%-10s%b " "${RED}" "✗ Блок" "${NC}"
+            printf "%b%-10s%b " "${RED}" "[-] Блок" "${NC}"
         fi
         printf "%b%-14s%b\n" "${dpi_col}" "${dpi_verdict}" "${NC}"
     done

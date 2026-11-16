@@ -123,7 +123,7 @@ z2m_bootstrap() {
 service_menu() {
     while true; do
         tui_banner
-        tui_header "🛡️ Управление службой Zapret2"
+        tui_header "Управление службой Zapret2"
 
         local st="${RED}Остановлена${NC}"
         if zapret_is_running; then
@@ -157,9 +157,9 @@ service_menu() {
         printf "  4. Показать полные параметры NFQWS2_OPT\n"
         printf "  5. Включить автозапуск при старте роутера\n"
         printf "  6. Отключить автозапуск\n"
-        printf "  7. 🎧 Починить голос Discord (Voice / звонки / custom.d #50)\n"
-        printf "  8. 🌐 Порты перехвата TCP / UDP (текущие: %s / %s)\n" "$(zapret_get_ports_tcp | cut -c1-15)..." "$(zapret_get_ports_udp | cut -c1-15)..."
-        printf "  9. 🔄 Проверить и обновить Zapret2 (1andrevich/zapret2-openwrt)\n"
+        printf "  7. Починить голос Discord (Voice / звонки / custom.d #50)\n"
+        printf "  8. Порты перехвата TCP / UDP (текущие: %s / %s)\n" "$(zapret_get_ports_tcp | cut -c1-15)..." "$(zapret_get_ports_udp | cut -c1-15)..."
+        printf "  9. Проверить и обновить Zapret2 (1andrevich/zapret2-openwrt)\n"
         printf "  0. Назад в главное меню\n\n"
 
         local sc
@@ -244,14 +244,14 @@ service_menu() {
 strategy_menu() {
     while true; do
         tui_banner
-        tui_header "🧬 Подбор и тестирование стратегий"
+        tui_header "Подбор и тестирование стратегий"
 
-        printf "  1. ⚡ Автоподбор из каталога        %b(быстрая проверка 9 проверенных стратегий)%b\n" "${DGRAY}" "${NC}"
-        printf "  2. 🧬 Двухпроходный генератор       %b(полный алгоритм Asterlike: Discord + YouTube)%b\n" "${DGRAY}" "${NC}"
-        printf "  3. ▶️ Тестирование только YouTube   %b(подбор стратегии для видео и googlevideo)%b\n" "${DGRAY}" "${NC}"
-        printf "  4. 💬 Тестирование только Discord   %b(подбор стратегии для Gateway и CDN)%b\n" "${DGRAY}" "${NC}"
-        printf "  5. 🔍 Проверить текущую стратегию   %b(быстрый отчет по доступности хостов)%b\n" "${DGRAY}" "${NC}"
-        printf "  6. 🎧 Исправление голоса Discord    %b(звонки, RTC, custom.d #50)%b\n" "${DGRAY}" "${NC}"
+        printf "  1. Автоподбор из каталога           %b(быстрая проверка 9 проверенных стратегий)%b\n" "${DGRAY}" "${NC}"
+        printf "  2. Двухпроходный генератор          %b(полный алгоритм Asterlike: Discord + YouTube)%b\n" "${DGRAY}" "${NC}"
+        printf "  3. Тестирование только YouTube      %b(подбор стратегии для видео и googlevideo)%b\n" "${DGRAY}" "${NC}"
+        printf "  4. Тестирование только Discord      %b(подбор стратегии для Gateway и CDN)%b\n" "${DGRAY}" "${NC}"
+        printf "  5. Проверить текущую стратегию      %b(быстрый отчет по доступности хостов)%b\n" "${DGRAY}" "${NC}"
+        printf "  6. Исправление голоса Discord       %b(звонки, RTC, custom.d #50)%b\n" "${DGRAY}" "${NC}"
         printf "  0. Назад в главное меню\n\n"
 
         local st_choice
@@ -290,7 +290,7 @@ strategy_menu() {
 # Task 5: Check case for non-numeric input first to prevent ash "bad number" errors
 manual_catalog_menu() {
     tui_banner
-    tui_header "🎯 Каталог проверенных стратегий"
+    tui_header "Каталог проверенных стратегий"
 
     local i=1
     while [ "${i}" -le "${CATALOG_COUNT}" ]; do
@@ -387,16 +387,16 @@ main_menu() {
         printf "  %bDNS / DoH  :%b %b\n" "${BOLD}" "${NC}" "${doh_stat}"
         printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 
-        printf "  %b1.%b 🛡️ %bНастройка и служба Zapret2%b    %b(статус, запуск, перезапуск, автозапуск)%b\n" "${BOLD}" "${NC}" "${BLUE}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b2.%b 🧬 %bПодбор и генерация стратегий%b  %b(генератор Asterlike, автоподбор, тесты)%b\n" "${BOLD}" "${NC}" "${MAGENTA}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b3.%b 🎯 %bКаталог готовых стратегий%b     %b(9 пресетов: General, Flowseal, VK...)%b\n" "${BOLD}" "${NC}" "${WHITE}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b4.%b 🎧 %bИсправление Discord Voice (звонки/RTC)%b %b(STUN + Media IP Discovery)%b\n" "${BOLD}" "${NC}" "${MAGENTA}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b5.%b 🌐 %bПорты перехвата TCP / UDP%b     %b(Cloudflare, Discord, игры: 80,443... / 443,50000...)%b\n" "${BOLD}" "${NC}" "${CYAN}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b6.%b 🔐 %bНастройка DNS и DoH%b           %b(Google, Quad9, Xbox, DNS.ru, Cloudflare)%b\n" "${BOLD}" "${NC}" "${GREEN}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b7.%b 📁 %bСписки доменов и исключений%b   %b(YouTube, Discord, Исключения)%b\n" "${BOLD}" "${NC}" "${YELLOW}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b8.%b 🩺 Диагностика сети и блокировок     %b(проверка DPI RST/Freeze, вердикты)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b9.%b 📦 Синхронизация файлов и блобов    %b(копирование fake-блобов в /opt/zapret2)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b10.%b 🔄 Центр обновлений             %b(проверка и обновление Zapret2 и Z2-Manager)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b1.%b %bНастройка и служба Zapret2%b    %b(статус, запуск, перезапуск, автозапуск)%b\n" "${BOLD}" "${NC}" "${BLUE}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b2.%b %bПодбор и генерация стратегий%b  %b(генератор Asterlike, автоподбор, тесты)%b\n" "${BOLD}" "${NC}" "${MAGENTA}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b3.%b %bКаталог готовых стратегий%b     %b(9 пресетов: General, Flowseal, VK...)%b\n" "${BOLD}" "${NC}" "${WHITE}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b4.%b %bИсправление Discord Voice%b     %b(звонки, RTC, custom.d script #50)%b\n" "${BOLD}" "${NC}" "${MAGENTA}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b5.%b %bПорты перехвата TCP / UDP%b     %b(Cloudflare, Discord, игры)%b\n" "${BOLD}" "${NC}" "${CYAN}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b6.%b %bНастройка DNS и DoH%b           %b(Google, Quad9, Xbox, DNS.ru, Cloudflare)%b\n" "${BOLD}" "${NC}" "${GREEN}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b7.%b %bСписки доменов и исключений%b   %b(YouTube, Discord, Исключения)%b\n" "${BOLD}" "${NC}" "${YELLOW}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b8.%b %bДиагностика сети и блокировок%b %b(проверка DPI RST/Freeze, вердикты)%b\n" "${BOLD}" "${NC}" "${CYAN}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b9.%b %bСинхронизация файлов и блобов%b %b(копирование fake-блобов в /opt/zapret2)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}" "${DGRAY}" "${NC}"
+        printf " %b10.%b %bЦентр обновлений%b             %b(проверка и обновление Zapret2 и Z2-Manager)%b\n" "${BOLD}" "${NC}" "${DGRAY}" "${NC}" "${DGRAY}" "${NC}"
         printf "  %b0.%b Выход\n\n" "${BOLD}" "${NC}"
 
         local choice
