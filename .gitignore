@@ -1,0 +1,18 @@
+# Agent customizations & local skills
+.agents/
+AGENTS.md
+.claude/
+.gemini/
+
+# Editor & OS artifacts
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Runtime & temporary artifacts
+*.tmp
+*.log
+backups/
