@@ -96,14 +96,14 @@ Z2M_RESTART_SETTLE="${Z2M_RESTART_SETTLE:-1}"
 
 # Probing target endpoints (Expanded suite inspired by StressOzz)
 DISCORD_PROBE_HOSTS="discord.com gateway.discord.gg cdn.discordapp.com"
-YOUTUBE_PROBE_HOSTS="www.youtube.com redirector.googlevideo.com i.ytimg.com"
+YOUTUBE_PROBE_HOSTS="www.youtube.com redirector.googlevideo.com i.ytimg.com yt3.ggpht.com"
 BLOCKED_PROBE_HOSTS="rutracker.org x.com instagram.com"
 
 # Benchmark domain suite for auto-selection (YouTube + Discord + RKN blocked)
 ALL_PROBE_HOSTS="www.youtube.com redirector.googlevideo.com discord.com gateway.discord.gg rutracker.org"
 
-# Full Diagnostic suite (10 domains across YouTube, Discord, RKN blocks & connection control)
-DIAGNOSTIC_HOSTS="www.youtube.com redirector.googlevideo.com i.ytimg.com discord.com gateway.discord.gg cdn.discordapp.com rutracker.org x.com instagram.com vk.com"
+# Full Diagnostic suite (11 domains across YouTube, Discord, RKN blocks & connection control)
+DIAGNOSTIC_HOSTS="www.youtube.com redirector.googlevideo.com i.ytimg.com yt3.ggpht.com discord.com gateway.discord.gg cdn.discordapp.com rutracker.org x.com instagram.com vk.com"
 
 # Chrome-like User-Agent for realistic probes
 BROWSER_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"

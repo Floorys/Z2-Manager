@@ -19,11 +19,13 @@ manifest.googlevideo.com
 redirector.googlevideo.com
 wide-youtube.l.google.com
 youtubei.googleapis.com
+ggpht.com
 yt3.ggpht.com
 yt4.ggpht.com
+googleusercontent.com
+lh3.googleusercontent.com
 youtube-nocookie.com
 youtube-ui.l.google.com
 yt-video-upload.l.google.com
 jnn-pa.googleapis.com
 play.google.com
-lh3.googleusercontent.com

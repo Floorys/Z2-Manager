@@ -14,8 +14,9 @@ get_host_category() {
     local h="$1"
     case "${h}" in
         www.youtube.com)    echo "YouTube (Web)" ;;
-        googlevideo.com)    echo "YouTube (Видео)" ;;
+        redirector.googlevideo.com|googlevideo.com) echo "YouTube (Видео)" ;;
         i.ytimg.com)        echo "YouTube (Превью)" ;;
+        yt3.ggpht.com)      echo "YouTube (Аватарки)" ;;
         discord.com)        echo "Discord (Web)" ;;
         gateway.discord.gg) echo "Discord (Голос/GW)" ;;
         cdn.discordapp.com) echo "Discord (Медиа)" ;;
