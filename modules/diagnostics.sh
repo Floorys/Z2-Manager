@@ -73,8 +73,8 @@ run_diagnostics() {
         local cat_name
         cat_name=$(get_host_category "${host}")
 
-        # Live progress indicator
-        printf "%-24s %-18s %b[...] Тест%b\r" "${host}" "${cat_name}" "${YELLOW}" "${NC}"
+        # Live progress indicator only on interactive terminals
+        [ -t 1 ] && printf "%-24s %-18s %b[...] Тест%b\r" "${host}" "${cat_name}" "${YELLOW}" "${NC}"
 
         local is_ok=0
         if probe_http_reach "${host}" 2; then
@@ -105,7 +105,7 @@ run_diagnostics() {
             *) dpi_col="${RED}" ;;
         esac
 
-        printf "%-24s %-18s " "${host}" "${cat_name}"
+        printf "\r\033[K%-24s %-18s " "${host}" "${cat_name}"
         if [ "${is_ok}" -eq 1 ]; then
             printf "%b%-10s%b " "${GREEN}" "[+] Доступ" "${NC}"
         else
