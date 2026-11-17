@@ -380,18 +380,24 @@ main_menu() {
         short_udp=$(printf "%.40s" "${cur_udp}")
         [ ${#cur_udp} -gt 40 ] && short_udp="${short_udp}..."
 
+        local quic_stat="${YELLOW}Разрешен${NC}"
+        if quic_is_blocked; then
+            quic_stat="${GREEN}Заблокирован (быстрый YouTube)${NC}"
+        fi
+
         printf "  %bУстройство :%b %b%s%b (%s)\n" "${BOLD}" "${NC}" "${CYAN}" "${model}" "${NC}" "${owrt_ver}"
         printf "  %bZapret2    :%b %b\n" "${BOLD}" "${NC}" "${zap_display}"
         printf "  %bПорты TCP  :%b %b%s%b\n" "${BOLD}" "${NC}" "${GREEN}" "${short_tcp}" "${NC}"
         printf "  %bПорты UDP  :%b %b%s%b\n" "${BOLD}" "${NC}" "${GREEN}" "${short_udp}" "${NC}"
         printf "  %bDNS / DoH  :%b %b\n" "${BOLD}" "${NC}" "${doh_stat}"
+        printf "  %bБлок QUIC  :%b %b\n" "${BOLD}" "${NC}" "${quic_stat}"
         printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 
         printf "  %b1.%b %bНастройка и служба Zapret2%b    %b(статус, запуск, перезапуск, автозапуск)%b\n" "${BOLD}" "${NC}" "${BLUE}" "${NC}" "${DGRAY}" "${NC}"
         printf "  %b2.%b %bПодбор и генерация стратегий%b  %b(генератор Asterlike, автоподбор, тесты)%b\n" "${BOLD}" "${NC}" "${MAGENTA}" "${NC}" "${DGRAY}" "${NC}"
         printf "  %b3.%b %bКаталог готовых стратегий%b     %b(9 пресетов: General, Flowseal, VK...)%b\n" "${BOLD}" "${NC}" "${WHITE}" "${NC}" "${DGRAY}" "${NC}"
         printf "  %b4.%b %bИсправление Discord Voice%b     %b(звонки, RTC, custom.d script #50)%b\n" "${BOLD}" "${NC}" "${MAGENTA}" "${NC}" "${DGRAY}" "${NC}"
-        printf "  %b5.%b %bПорты перехвата TCP / UDP%b     %b(Cloudflare, Discord, игры)%b\n" "${BOLD}" "${NC}" "${CYAN}" "${NC}" "${DGRAY}" "${NC}"
+        printf "  %b5.%b %bПорты перехвата и блок QUIC%b   %b(порты TCP/UDP, блок UDP 443 для YouTube)%b\n" "${BOLD}" "${NC}" "${CYAN}" "${NC}" "${DGRAY}" "${NC}"
         printf "  %b6.%b %bНастройка DNS и DoH%b           %b(Google, Quad9, Xbox, DNS.ru, Cloudflare)%b\n" "${BOLD}" "${NC}" "${GREEN}" "${NC}" "${DGRAY}" "${NC}"
         printf "  %b7.%b %bСписки доменов и исключений%b   %b(YouTube, Discord, Исключения)%b\n" "${BOLD}" "${NC}" "${YELLOW}" "${NC}" "${DGRAY}" "${NC}"
         printf "  %b8.%b %bДиагностика сети и блокировок%b %b(проверка DPI RST/Freeze, вердикты)%b\n" "${BOLD}" "${NC}" "${CYAN}" "${NC}" "${DGRAY}" "${NC}"
@@ -488,6 +494,26 @@ case "$1" in
         run_ports_menu
         exit $?
         ;;
+    --quic|-q)
+        z2m_bootstrap
+        if quic_is_blocked; then
+            if quic_block_disable; then
+                printf "Блокировка QUIC отключена.\n"
+                exit 0
+            else
+                printf "Ошибка: не удалось отключить блокировку QUIC.\n" >&2
+                exit 1
+            fi
+        else
+            if quic_block_enable; then
+                printf "Блокировка QUIC включена (UDP 443 REJECT).\n"
+                exit 0
+            else
+                printf "Ошибка: не удалось включить блокировку QUIC.\n" >&2
+                exit 1
+            fi
+        fi
+        ;;
     --diagnostics|-d)
         Z2M_NONINTERACTIVE=1; export Z2M_NONINTERACTIVE
         # Task 2: No bootstrap, zero side-effects
@@ -534,6 +560,7 @@ case "$1" in
         printf "  z2m -dc | --discord              Тестирование стратегий только для Discord\n"
         printf "  z2m -dv | --discord-voice|--voice Установка исправления Discord Voice (звонки / RTC)\n"
         printf "  z2m -p  | --ports                Настройка перехватываемых портов TCP / UDP\n"
+        printf "  z2m -q  | --quic                 Переключение блокировки QUIC (ускорение YouTube)\n"
         printf "  z2m -d  | --diagnostics          Диагностика доступности сервисов и DPI\n"
         printf "  z2m -u  | --update               Центр обновлений (интерактивное меню)\n"
         printf "  z2m -uz | --update-zapret       Обновление пакета Zapret2 до актуальной версии\n"

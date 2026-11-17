@@ -534,6 +534,57 @@ test_current_strategy_renders_ok() (
 )
 check "run_test_current_strategy correctly displays OK status for accessible hosts" test_current_strategy_renders_ok
 
+test_quic_block_toggle() (
+    fixture
+    . "${ROOT}/modules/ports.sh"
+    local uci_state="${CASE_DIR}/uci_state"
+    : > "${uci_state}"
+    uci() {
+        case "$1" in
+            -q) shift ;;
+        esac
+        case "$1" in
+            get)
+                local match
+                match=$(grep "^$2=" "${uci_state}" 2>/dev/null | head -n 1) || return 1
+                [ -n "${match}" ] || return 1
+                printf '%s\n' "${match#*=}"
+                ;;
+            set)
+                local pair="$2"
+                local key="${pair%%=*}"
+                local val="${pair#*=}"
+                grep -v "^${key}=" "${uci_state}" > "${uci_state}.tmp" 2>/dev/null || :
+                printf "%s=%s\n" "${key}" "${val}" >> "${uci_state}.tmp"
+                mv "${uci_state}.tmp" "${uci_state}"
+                ;;
+            delete)
+                local key="$2"
+                grep -v "^${key}" "${uci_state}" > "${uci_state}.tmp" 2>/dev/null || :
+                mv "${uci_state}.tmp" "${uci_state}"
+                ;;
+            commit) return 0 ;;
+            *) return 0 ;;
+        esac
+    }
+
+    # Initially not blocked
+    quic_is_blocked && return 1
+
+    # Enable block
+    quic_block_enable || return 1
+    quic_is_blocked || return 1
+    grep -q "firewall.block_quic.target=REJECT" "${uci_state}" || return 1
+
+    # Disable block
+    quic_block_disable || return 1
+    quic_is_blocked && return 1
+    grep -q "firewall.block_quic" "${uci_state}" && return 1
+
+    return 0
+)
+check "quic_block_enable and disable correctly manage firewall rule via UCI" test_quic_block_toggle
+
 shell_syntax() {
     find "${ROOT}" -name '*.sh' -exec sh -n {} \; > "${TMP_ROOT}/syntax-log" 2>&1
     [ ! -s "${TMP_ROOT}/syntax-log" ]

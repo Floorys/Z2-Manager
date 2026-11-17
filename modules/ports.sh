@@ -9,6 +9,91 @@
 [ -f "${Z2M_DIR}/core/tui.sh" ] && . "${Z2M_DIR}/core/tui.sh"
 [ -f "${Z2M_DIR}/core/zapret_service.sh" ] && . "${Z2M_DIR}/core/zapret_service.sh"
 
+quic_is_blocked() {
+    command -v uci >/dev/null 2>&1 || return 1
+    local tgt
+    tgt=$(uci -q get firewall.block_quic.target)
+    if [ "${tgt}" = "REJECT" ] || [ "${tgt}" = "DROP" ]; then
+        [ "$(uci -q get firewall.block_quic.enabled)" != "0" ] && return 0
+    fi
+    local i=0 name
+    while [ "${i}" -lt 50 ]; do
+        name=$(uci -q get "firewall.@rule[${i}].name") || break
+        [ -z "${name}" ] && break
+        if [ "${name}" = "Block-QUIC" ]; then
+            tgt=$(uci -q get "firewall.@rule[${i}].target")
+            if [ "${tgt}" = "REJECT" ] || [ "${tgt}" = "DROP" ]; then
+                [ "$(uci -q get "firewall.@rule[${i}].enabled")" != "0" ] && return 0
+            fi
+        fi
+        i=$((i + 1))
+    done
+    return 1
+}
+
+quic_block_enable() {
+    command -v uci >/dev/null 2>&1 || return 1
+    uci set firewall.block_quic=rule
+    uci set firewall.block_quic.name='Block-QUIC'
+    uci set firewall.block_quic.src='lan'
+    uci set firewall.block_quic.dest='wan'
+    uci set firewall.block_quic.proto='udp'
+    uci set firewall.block_quic.dest_port='443'
+    uci set firewall.block_quic.target='REJECT'
+    uci set firewall.block_quic.enabled='1'
+    uci commit firewall || return 1
+    if [ -x /etc/init.d/firewall ]; then
+        /etc/init.d/firewall reload >/dev/null 2>&1
+    fi
+    return 0
+}
+
+quic_block_disable() {
+    command -v uci >/dev/null 2>&1 || return 1
+    local changed=0
+    if [ -n "$(uci -q get firewall.block_quic)" ]; then
+        uci delete firewall.block_quic
+        changed=1
+    fi
+    local i=0 name
+    while [ "${i}" -lt 50 ]; do
+        name=$(uci -q get "firewall.@rule[${i}].name") || break
+        [ -z "${name}" ] && break
+        if [ "${name}" = "Block-QUIC" ]; then
+            uci delete "firewall.@rule[${i}]"
+            changed=1
+            continue
+        fi
+        i=$((i + 1))
+    done
+    if [ "${changed}" -eq 1 ]; then
+        uci commit firewall || return 1
+        if [ -x /etc/init.d/firewall ]; then
+            /etc/init.d/firewall reload >/dev/null 2>&1
+        fi
+    fi
+    return 0
+}
+
+quic_block_toggle() {
+    if quic_is_blocked; then
+        tui_info "Отключаем блокировку QUIC..."
+        if quic_block_disable; then
+            tui_success "Блокировка QUIC отключена."
+        else
+            tui_error "Не удалось отключить блокировку QUIC в firewall."
+        fi
+    else
+        tui_info "Включаем блокировку QUIC (REJECT UDP 443)..."
+        if quic_block_enable; then
+            tui_success "Блокировка QUIC включена! YouTube в браузерах теперь мгновенно работает по TCP без буферизации."
+        else
+            tui_error "Не удалось включить блокировку QUIC в firewall."
+        fi
+    fi
+    tui_pause
+}
+
 run_ports_menu() {
     while true; do
         tui_banner
@@ -18,8 +103,14 @@ run_ports_menu() {
         cur_tcp=$(zapret_get_ports_tcp)
         cur_udp=$(zapret_get_ports_udp)
 
+        local quic_stat="${YELLOW}Разрешен (может замедлять YouTube)${NC}"
+        if quic_is_blocked; then
+            quic_stat="${GREEN}Заблокирован (быстрый YouTube по TCP)${NC}"
+        fi
+
         printf "  %bТекущие порты TCP:%b %b%s%b\n" "${BOLD}" "${NC}" "${CYAN}" "${cur_tcp}" "${NC}"
         printf "  %bТекущие порты UDP:%b %b%s%b\n" "${BOLD}" "${NC}" "${CYAN}" "${cur_udp}" "${NC}"
+        printf "  %bБлокировка QUIC  :%b %b\n" "${BOLD}" "${NC}" "${quic_stat}"
         printf "%b  -------------------------------------------------------------------%b\n\n" "${DGRAY}" "${NC}"
 
         printf "  1. Установить рекомендуемые порты (Web + Discord Voice + Cloudflare)\n"
@@ -33,6 +124,7 @@ run_ports_menu() {
         printf "  3. Задать порты TCP вручную\n"
         printf "  4. Задать порты UDP вручную\n"
         printf "  5. Сбросить на минимальные стандартные порты (80,443 / 443)\n"
+        printf "  6. Переключить блокировку QUIC (ускорение YouTube без задержек)\n"
         printf "  0. Назад в главное меню\n\n"
 
         local choice
@@ -95,6 +187,9 @@ run_ports_menu() {
                     tui_error "Не удалось сбросить порты."
                 fi
                 tui_pause
+                ;;
+            6)
+                quic_block_toggle
                 ;;
             0)
                 break
