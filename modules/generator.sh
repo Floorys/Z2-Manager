@@ -251,6 +251,8 @@ strategy_generator_worker() {
     local best_y_idx=1
     local attempt=0
     local max_tests=9
+    local combo_res_file="${Z2M_TMP}/gen_combos.$$"
+    : > "${combo_res_file}" 2>/dev/null
 
     for d_idx in ${top_d_list}; do
         for y_idx in ${top_y_list}; do
@@ -341,10 +343,15 @@ strategy_generator_worker() {
                 best_y_idx="${y_idx}"
             fi
 
+            printf "%s|%s|%s|%s|%s|%s|%s\n" \
+                "${attempt}" "${d_name}" "${y_name}" "${cur_min}" "${cur_sum}" "${d_idx}" "${y_idx}" >> "${combo_res_file}"
+
             # Early exit: break both loops if max score reached
             if [ "${probe_max}" -gt 0 ] && [ "${cur_min}" -ge "${probe_max}" ]; then
-                tui_success "Достигнут максимальный результат (${cur_min}/${probe_max})! Досрочный выход."
-                break 2
+                if [ "${Z2M_EARLY_EXIT:-0}" = "1" ] || [ "${Z2M_NONINTERACTIVE:-0}" = "1" ]; then
+                    tui_success "Достигнут максимальный результат (${cur_min}/${probe_max})! Досрочный выход."
+                    break 2
+                fi
             fi
         done
         [ "${attempt}" -gt "${max_tests}" ] && break
@@ -352,6 +359,7 @@ strategy_generator_worker() {
 
     # If no strategy passed threshold (> 0), restore backup and inform user
     if [ "${best_min}" -le 0 ] && [ "${best_sum}" -le 0 ]; then
+        rm -f "${combo_res_file}" 2>/dev/null
         echo ""
         tui_error "Ни одна стратегия не смогла обеспечить доступ к тестируемым ресурсам!"
         tui_warn "Восстанавливаем исходную конфигурацию роутера..."
@@ -371,6 +379,7 @@ strategy_generator_worker() {
                 tui_info "Применение подтверждено пользователем."
                 ;;
             *)
+                rm -f "${combo_res_file}" 2>/dev/null
                 tui_info "Откатываемся к исходной конфигурации (baseline)..."
                 tui_pause
                 return 0
@@ -378,12 +387,56 @@ strategy_generator_worker() {
         esac
     fi
 
+    local chosen_d_idx="${best_d_idx}"
+    local chosen_y_idx="${best_y_idx}"
+
+    if [ "${Z2M_NONINTERACTIVE:-0}" != "1" ] && [ -s "${combo_res_file}" ]; then
+        echo ""
+        tui_header "Итоги генератора и выбор комбинации"
+        local c_num c_dname c_yname c_min c_sum c_didx c_yidx
+        local best_combo_num=1
+        while IFS='|' read -r c_num c_dname c_yname c_min c_sum c_didx c_yidx; do
+            if [ "${c_didx}" = "${best_d_idx}" ] && [ "${c_yidx}" = "${best_y_idx}" ]; then
+                best_combo_num="${c_num}"
+                printf "  %b%2s. Discord: %-16s + YouTube: %-16s (Баллы: %s) <- Рекомендуется%b\n" \
+                    "${GREEN}${BOLD}" "${c_num}" "${c_dname}" "${c_yname}" "${c_sum}" "${NC}"
+            else
+                printf "  %2s. Discord: %-16s + YouTube: %-16s (Баллы: %s)\n" \
+                    "${c_num}" "${c_dname}" "${c_yname}" "${c_sum}"
+            fi
+        done < "${combo_res_file}"
+        printf "   0. Отмена (оставить текущие настройки)\n\n"
+        local pick_combo
+        pick_combo=$(tui_prompt "Выберите номер комбинации для применения" "${best_combo_num}")
+        if [ "${pick_combo}" = "0" ]; then
+            rm -f "${combo_res_file}" 2>/dev/null
+            tui_info "Отмена выбора. Исходная конфигурация сохранена."
+            tui_pause
+            return 0
+        fi
+        local match_found=0
+        while IFS='|' read -r c_num c_dname c_yname c_min c_sum c_didx c_yidx; do
+            if [ "${c_num}" = "${pick_combo}" ]; then
+                chosen_d_idx="${c_didx}"
+                chosen_y_idx="${c_yidx}"
+                match_found=1
+                break
+            fi
+        done < "${combo_res_file}"
+        if [ "${match_found}" -ne 1 ]; then
+            tui_warn "Неверный номер. Будет применена рекомендованная комбинация."
+            chosen_d_idx="${best_d_idx}"
+            chosen_y_idx="${best_y_idx}"
+        fi
+    fi
+    rm -f "${combo_res_file}" 2>/dev/null
+
     # Build and permanently apply winning strategy
     local win_d_name win_y_name win_d_tls win_y_tls
-    win_d_name=$(get_candidate_name "${best_d_idx}")
-    win_y_name=$(get_candidate_name "${best_y_idx}")
-    win_d_tls=$(get_candidate_tls "${best_d_idx}")
-    win_y_tls=$(get_candidate_tls "${best_y_idx}")
+    win_d_name=$(get_candidate_name "${chosen_d_idx}")
+    win_y_name=$(get_candidate_name "${chosen_y_idx}")
+    win_d_tls=$(get_candidate_tls "${chosen_d_idx}")
+    win_y_tls=$(get_candidate_tls "${chosen_y_idx}")
 
     local final_opt
     final_opt=$(combo_build_args "${win_d_tls}" "${win_y_tls}" "${win_d_tls}")
@@ -396,7 +449,7 @@ strategy_generator_worker() {
     z2m_transaction_commit
 
     echo ""
-    tui_header "✨ Итоговая персональная стратегия сгенерирована!"
+    tui_header "Итоговая персональная стратегия применена!"
     tui_success "Discord профиль : ${win_d_name}"
     tui_success "YouTube профиль : ${win_y_name}"
     tui_info "Voice Discord   : STUN + IP Discovery (голос проверяется в приложении)"

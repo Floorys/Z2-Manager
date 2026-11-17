@@ -59,6 +59,9 @@ catalog_autoselect() {
 
     local best_idx=0 best_score=-1 best_fail=999 i=1
     local name opt ok total score maximum fail
+    local res_file="${Z2M_TMP}/results.$$"
+    : > "${res_file}" 2>/dev/null
+
     while [ "${i}" -le "${CATALOG_COUNT}" ]; do
         name=$(catalog_get_name "${i}")
         opt=$(catalog_get_opt "${i}")
@@ -77,18 +80,22 @@ catalog_autoselect() {
         fail=$((total - ok))
         printf "\r\033[K"
         tui_print_result_row "${name}" "${ok}" "${fail}" "${total}"
+        printf "%s|%s|%s|%s|%s|%s\n" "${i}" "${name}" "${ok}" "${total}" "${score}" "${fail}" >> "${res_file}"
         if [ "${score}" -gt "${best_score}" ] || {
             [ "${score}" -eq "${best_score}" ] && [ "${fail}" -lt "${best_fail}" ];
         }; then
             best_idx="${i}"; best_score="${score}"; best_fail="${fail}"
         fi
         if [ "${maximum}" -gt 0 ] && [ "${score}" -eq "${maximum}" ] && [ "${fail}" -eq 0 ]; then
-            tui_success "Найдена оптимальная стратегия (${name}) с результатом 100%!"
-            break
+            if [ "${Z2M_EARLY_EXIT:-0}" = "1" ] || [ "${Z2M_NONINTERACTIVE:-0}" = "1" ]; then
+                tui_success "Найдена оптимальная стратегия (${name}) с результатом 100%!"
+                break
+            fi
         fi
         i=$((i + 1))
     done
     if [ "${best_score}" -le 0 ]; then
+        rm -f "${res_file}" 2>/dev/null
         tui_error "Ни одна стратегия не прошла проверки. Выполняется откат."
         tui_pause
         return 1
@@ -101,13 +108,58 @@ catalog_autoselect() {
         answer=$(tui_prompt "Результат не лучше baseline. Применить всё равно? [y/N]" "N")
         case "${answer}" in
             y|Y|yes|YES) ;;
-            *) tui_info "Сохраняем исходную конфигурацию."; tui_pause; return 0 ;;
+            *)
+                rm -f "${res_file}" 2>/dev/null
+                tui_info "Сохраняем исходную конфигурацию."
+                tui_pause
+                return 0
+                ;;
         esac
     fi
-    opt=$(catalog_get_opt "${best_idx}")
+
+    local chosen_idx="${best_idx}"
+    if [ "${Z2M_NONINTERACTIVE:-0}" != "1" ] && [ -s "${res_file}" ]; then
+        echo ""
+        tui_header "Итоги тестирования и выбор стратегии"
+        local r_idx r_name r_ok r_tot r_sc r_fl
+        while IFS='|' read -r r_idx r_name r_ok r_tot r_sc r_fl; do
+            if [ "${r_idx}" = "${best_idx}" ]; then
+                printf "  %b%2s. %-32s [%s/%s доступно] <- Рекомендуется%b\n" \
+                    "${GREEN}${BOLD}" "${r_idx}" "${r_name}" "${r_ok}" "${r_tot}" "${NC}"
+            else
+                printf "  %2s. %-32s [%s/%s доступно]\n" \
+                    "${r_idx}" "${r_name}" "${r_ok}" "${r_tot}"
+            fi
+        done < "${res_file}"
+        printf "   0. Отмена (оставить текущие настройки)\n\n"
+        local user_pick
+        user_pick=$(tui_prompt "Выберите номер стратегии для применения" "${best_idx}")
+        case "${user_pick}" in
+            0)
+                rm -f "${res_file}" 2>/dev/null
+                tui_info "Выбор отменен. Исходная конфигурация сохранена."
+                tui_pause
+                return 0
+                ;;
+            ''|*[!0-9]*)
+                chosen_idx="${best_idx}"
+                ;;
+            *)
+                if [ "${user_pick}" -ge 1 ] && [ "${user_pick}" -le "${CATALOG_COUNT}" ]; then
+                    chosen_idx="${user_pick}"
+                else
+                    tui_warn "Неверный номер. Применяется рекомендованная стратегия (${best_idx})."
+                    chosen_idx="${best_idx}"
+                fi
+                ;;
+        esac
+    fi
+    rm -f "${res_file}" 2>/dev/null
+
+    opt=$(catalog_get_opt "${chosen_idx}")
     zapret_set_opt "${opt}" || return 1
     z2m_transaction_commit
-    tui_success "Применена стратегия: $(catalog_get_name "${best_idx}")"
+    tui_success "Применена стратегия: $(catalog_get_name "${chosen_idx}")"
     tui_info "Проверены TCP/TLS; голосовой UDP-трафик проверяйте в Discord."
     tui_pause
 }
