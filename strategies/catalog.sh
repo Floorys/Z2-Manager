@@ -43,15 +43,15 @@ catalog_get_tagline() {
 catalog_get_opt() {
     case "$1" in
         1)
-            # 1) RECOMMENDED: Discord hostfakesplit, YouTube fake+multidisorder
+            # 1) RECOMMENDED: Discord hostfakesplit, YouTube hostfakesplit
             local dc="--lua-desync=hostfakesplit:host=www.google.com:tcp_ts=-1000:tcp_md5:repeats=4"
-            local yt="--lua-desync=fake:blob=tls_google:tcp_md5:tcp_seq=-10000:repeats=6 --lua-desync=multidisorder:pos=1,midsld"
+            local yt="--lua-desync=hostfakesplit:host=www.google.com:tcp_ts=-1000:tcp_md5:repeats=4"
             combo_build_args "${dc}" "${yt}" "${dc}"
             ;;
         2)
             # 2) TARGETED DOMESTIC (VK): mask as vk.com for Russian ISPs
             local dc="--lua-desync=hostfakesplit:host=vk.com:tcp_ts=-1000:tcp_md5:repeats=4"
-            local yt="--lua-desync=fake:blob=tls_google:tcp_md5:tcp_seq=-10000:repeats=6 --lua-desync=multidisorder:pos=1,midsld"
+            local yt="--lua-desync=hostfakesplit:host=vk.com:midhost=midsld:disorder_after:tcp_ts=-1000:tcp_md5:repeats=4"
             combo_build_args "${dc}" "${yt}" "${dc}"
             ;;
         3)
